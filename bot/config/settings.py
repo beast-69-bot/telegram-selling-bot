@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     UPI_NAME: str = "My Store"
     STORE_NAME: str = "🛍 My Store"
     SUPPORT_USERNAME: str = "@support"
+    XWALLET_API_KEY: str = ""
+    PAYMENT_GATEWAY: str = "manual"  # "manual" or "xwallet"
 
     # ── Order Settings ────────────────────────────────────────────────────────
     ORDER_EXPIRY_MINUTES: int = 10

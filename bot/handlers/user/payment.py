@@ -1,24 +1,37 @@
 """
 handlers/user/payment.py
-Order creation → UPI QR → Screenshot upload → Admin notification.
+Order creation -> payment flow -> admin notification.
 """
 
+import asyncio
 import logging
+
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from config.settings import settings
 from keyboards.keyboards import (
-    cancel_screenshot_kb, main_menu_kb, payment_sent_kb,
-    OrderConfirmCD, UploadScreenshotCD, CancelOrderCD
+    cancel_screenshot_kb,
+    main_menu_kb,
+    payment_sent_kb,
+    OrderConfirmCD,
+    UploadScreenshotCD,
+    CancelOrderCD,
 )
 from services.db_service import (
-    approve_payment, count_pending_orders, create_order, get_order,
-    get_admins_by_role, get_settings, submit_screenshot, update_order_status,
+    approve_payment,
+    count_pending_orders,
+    create_order,
+    get_order,
+    get_admins_by_role,
+    get_settings,
+    submit_screenshot,
+    update_order_status,
     log_action,
 )
-from database.models import AdminRole, OrderStatus
+from database.models import AdminRole, BotSettings, Order, OrderStatus
+from services.xwallet_service import create_payment, get_qr_image_url, wait_for_payment
 from states.states import PaymentStates
 from utils.qr_generator import generate_upi_qr
 
@@ -26,10 +39,13 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-# ── Confirm Order → Create + Show Payment QR ─────────────────────────────────
-
 @router.callback_query(OrderConfirmCD.filter())
-async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmCD, state: FSMContext, bot: Bot):
+async def cb_confirm_order(
+    callback: CallbackQuery,
+    callback_data: OrderConfirmCD,
+    state: FSMContext,
+    bot: Bot,
+) -> None:
     plan_id = callback_data.plan_id
     user_id = callback.from_user.id
 
@@ -45,7 +61,6 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
 
         bot_settings = await get_settings()
         upi_id = bot_settings.upi_id
-
         order = await create_order(user_id=user_id, plan_id=plan_id, upi_id=upi_id)
     except ValueError as e:
         await callback.answer(str(e), show_alert=True)
@@ -55,7 +70,21 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
         await callback.answer("⚠️ Something went wrong. Please try again or contact support.", show_alert=True)
         return
 
-    # Generate QR code
+    if settings.PAYMENT_GATEWAY == "xwallet":
+        await _handle_xwallet_payment(callback, bot, order)
+    else:
+        await _handle_manual_payment(callback, bot, order, bot_settings)
+
+
+async def _handle_manual_payment(
+    callback: CallbackQuery,
+    bot: Bot,
+    order: Order,
+    bot_settings: BotSettings,
+) -> None:
+    """Preserve the existing manual UPI QR and screenshot payment flow."""
+    _ = bot
+    upi_id = bot_settings.upi_id
     qr_bytes = generate_upi_qr(
         upi_id=upi_id,
         amount=order.amount,
@@ -77,7 +106,6 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
     )
     kb = payment_sent_kb(order.order_id)
 
-    # Delete summary message, send photo with QR
     await callback.message.delete()
     await callback.message.answer_photo(
         photo=BufferedInputFile(qr_bytes.read(), filename="payment_qr.png"),
@@ -87,10 +115,83 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
     await callback.answer()
 
 
-# ── "I've sent payment" → Ask for screenshot ─────────────────────────────────
+async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Order) -> None:
+    """Generate an XWallet QR and start background auto-verification polling."""
+    loading_message = await callback.message.answer("⏳ Generating payment QR...")
+
+    try:
+        payment_data = await create_payment(order.amount, order.order_id)
+        qr_code_id = str(payment_data.get("qr_code_id") or payment_data.get("code") or "")
+        if not qr_code_id:
+            raise ValueError("Missing qr_code_id in XWallet create_payment response")
+
+        qr_data = await get_qr_image_url(qr_code_id)
+        qr_url = qr_data.get("qr_url")
+        if not qr_url:
+            raise ValueError("Missing qr_url in XWallet QR response")
+
+        await loading_message.delete()
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=str(qr_url),
+            caption=(
+                f"💳 <b>XWallet Payment</b>\n\n"
+                f"📦 Product: <b>{order.product_name}</b>\n"
+                f"📋 Plan: <b>{order.plan_name}</b>\n"
+                f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
+                f"🆔 Order ID: <b>#{order.order_id}</b>\n\n"
+                f"10 minutes mein pay karo"
+            ),
+            reply_markup=cancel_screenshot_kb(order.order_id),
+        )
+        asyncio.create_task(_poll_and_complete(bot, order, qr_code_id))
+    except Exception as e:
+        logger.error(f"Error creating XWallet payment for order {order.order_id}: {e}")
+        try:
+            await loading_message.delete()
+        except Exception:
+            pass
+        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
+
+    await callback.answer()
+
+
+async def _poll_and_complete(bot: Bot, order: Order, qr_code_id: str) -> None:
+    """Wait for XWallet settlement and update the order automatically."""
+    try:
+        success = await wait_for_payment(qr_code_id)
+        latest_order = await get_order(order.order_id)
+        if not latest_order or latest_order.status != OrderStatus.pending:
+            return
+
+        if success:
+            await approve_payment(order.order_id, admin_id=0)
+            paid_order = await get_order(order.order_id) or latest_order
+            await bot.send_message(
+                chat_id=order.user_id,
+                text="✅ Payment Received! Delivering soon...",
+            )
+
+            from handlers.admin.payments import _notify_order_admins
+
+            await _notify_order_admins(bot, paid_order)
+            return
+
+        await update_order_status(order.order_id, OrderStatus.expired)
+        await bot.send_message(
+            chat_id=order.user_id,
+            text="⏰ Payment expired. Please create a new order.",
+        )
+    except Exception as e:
+        logger.error(f"Error while polling XWallet payment for order {order.order_id}: {e}")
+
 
 @router.callback_query(UploadScreenshotCD.filter())
-async def cb_upload_screenshot(callback: CallbackQuery, callback_data: UploadScreenshotCD, state: FSMContext):
+async def cb_upload_screenshot(
+    callback: CallbackQuery,
+    callback_data: UploadScreenshotCD,
+    state: FSMContext,
+) -> None:
     try:
         order_id = callback_data.order_id
         order = await get_order(order_id)
@@ -118,10 +219,8 @@ async def cb_upload_screenshot(callback: CallbackQuery, callback_data: UploadScr
     await callback.answer()
 
 
-# ── Receive Screenshot ────────────────────────────────────────────────────────
-
 @router.message(PaymentStates.waiting_screenshot, F.photo)
-async def handle_screenshot(message: Message, state: FSMContext, bot: Bot):
+async def handle_screenshot(message: Message, state: FSMContext, bot: Bot) -> None:
     data = await state.get_data()
     order_id = data.get("order_id")
 
@@ -139,7 +238,6 @@ async def handle_screenshot(message: Message, state: FSMContext, bot: Bot):
             )
             return
 
-        # Save screenshot file_id
         file_id = message.photo[-1].file_id
         await submit_screenshot(order_id, file_id)
     except Exception as e:
@@ -156,12 +254,11 @@ async def handle_screenshot(message: Message, state: FSMContext, bot: Bot):
         reply_markup=main_menu_kb(),
     )
 
-    # Notify payment admins
     await _notify_payment_admins(bot, order, file_id)
 
 
-async def _notify_payment_admins(bot: Bot, order, file_id: str):
-    """Forward screenshot + approve/reject buttons to all payment admins."""
+async def _notify_payment_admins(bot: Bot, order: Order, file_id: str) -> None:
+    """Forward screenshot and review buttons to all payment admins."""
     from keyboards.keyboards import payment_verify_kb
 
     try:
@@ -193,10 +290,12 @@ async def _notify_payment_admins(bot: Bot, order, file_id: str):
             logger.warning(f"Could not notify admin {admin.id}: {e}")
 
 
-# ── Cancel Order ──────────────────────────────────────────────────────────────
-
 @router.callback_query(CancelOrderCD.filter())
-async def cb_cancel_order(callback: CallbackQuery, callback_data: CancelOrderCD, state: FSMContext):
+async def cb_cancel_order(
+    callback: CallbackQuery,
+    callback_data: CancelOrderCD,
+    state: FSMContext,
+) -> None:
     try:
         order_id = callback_data.order_id
         order = await get_order(order_id)
@@ -209,17 +308,22 @@ async def cb_cancel_order(callback: CallbackQuery, callback_data: CancelOrderCD,
         return
 
     await state.clear()
-    await callback.message.edit_text(
-        "❌ Order cancelled.\n\nYou can create a new order anytime.",
-        reply_markup=main_menu_kb(),
-    )
+    try:
+        await callback.message.edit_text(
+            "❌ Order cancelled.\n\nYou can create a new order anytime.",
+            reply_markup=main_menu_kb(),
+        )
+    except Exception:
+        await callback.message.delete()
+        await callback.message.answer(
+            "❌ Order cancelled.\n\nYou can create a new order anytime.",
+            reply_markup=main_menu_kb(),
+        )
     await callback.answer()
 
 
-# ── Non-photo in screenshot state ────────────────────────────────────────────
-
 @router.message(PaymentStates.waiting_screenshot)
-async def handle_non_photo(message: Message, state: FSMContext):
+async def handle_non_photo(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     order_id = data.get("order_id", "")
     await message.answer(
