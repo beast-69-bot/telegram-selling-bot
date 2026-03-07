@@ -23,6 +23,7 @@ from handlers.user.start import router as start_router
 from handlers.user.products import router as products_router
 from handlers.user.payment import router as payment_router
 from handlers.user.orders import router as orders_router
+from handlers.support_chat import router as support_chat_router
 
 from handlers.admin.panel import router as admin_panel_router
 from handlers.admin.products import router as admin_products_router
@@ -115,6 +116,7 @@ async def main() -> None:
     dp.include_router(products_router)
     dp.include_router(payment_router)
     dp.include_router(orders_router)
+    dp.include_router(support_chat_router)
 
     logger.info("🚀 Starting bot polling...")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())

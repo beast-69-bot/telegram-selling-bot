@@ -75,6 +75,7 @@ async def cb_support(callback: CallbackQuery):
     await callback.message.edit_text(
         f"💬 <b>Support</b>\n\n"
         f"Contact us at {settings.SUPPORT_USERNAME}\n\n"
+        f"You can also send a message directly in this chat and an admin will be notified.\n\n"
         f"Our team will assist you with any issues.",
         reply_markup=kb.as_markup(),
     )
