@@ -5,7 +5,7 @@ Product browsing with pagination, product detail, plan selection.
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from keyboards.keyboards import (
     main_menu_kb, order_confirm_kb, plans_kb, product_detail_kb, products_page_kb,
