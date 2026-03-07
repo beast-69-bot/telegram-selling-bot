@@ -68,16 +68,15 @@ async def cb_main_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "support")
 async def cb_support(callback: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🏠 Main Menu", callback_data="main_menu")
+    kb.adjust(1)
+
     await callback.message.edit_text(
         f"💬 <b>Support</b>\n\n"
         f"Contact us at {settings.SUPPORT_USERNAME}\n\n"
         f"Our team will assist you with any issues.",
-        reply_markup=__import__("keyboards.keyboards", fromlist=["back_to_admin_kb"])
-        .__dict__.get("back_to_admin_kb", lambda: None)() or
-        __import__("aiogram.utils.keyboard", fromlist=["InlineKeyboardBuilder"])
-        .InlineKeyboardBuilder()
-        .button(text="🏠 Main Menu", callback_data="main_menu")
-        .as_markup(),
+        reply_markup=kb.as_markup(),
     )
     await callback.answer()
 
