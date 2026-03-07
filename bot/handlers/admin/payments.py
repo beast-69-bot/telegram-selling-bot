@@ -138,6 +138,14 @@ async def cb_approve_payment(callback: CallbackQuery, callback_data: ApprovePaym
     except Exception as e:
         logger.warning(f"Could not notify user {order.user_id}: {e}")
 
+    await _notify_payment_admins_status(
+        bot=bot,
+        order=order,
+        actor_id=callback.from_user.id,
+        actor_label=callback.from_user.username or callback.from_user.full_name,
+        approved=True,
+    )
+
     # Notify order admins
     await _notify_order_admins(bot, order)
 
@@ -163,6 +171,41 @@ async def _notify_order_admins(bot: Bot, order):
             await bot.send_message(chat_id=admin.id, text=text, reply_markup=kb)
         except Exception as e:
             logger.warning(f"Could not notify order admin {admin.id}: {e}")
+
+
+async def _notify_payment_admins_status(
+    bot: Bot,
+    order,
+    actor_id: int,
+    actor_label: str,
+    approved: bool,
+    reason: str | None = None,
+):
+    from services.db_service import get_admins_by_role
+    from database.models import AdminRole
+
+    admins = await get_admins_by_role(AdminRole.payment_admin, AdminRole.super_admin, AdminRole.owner)
+    status_text = "APPROVED" if approved else "REJECTED"
+    actor_display = actor_label or str(actor_id)
+    text = (
+        f"🔄 <b>Payment Update</b>\n\n"
+        f"Order: <b>#{order.order_id}</b>\n"
+        f"Product: {order.product_name}\n"
+        f"Plan: {order.plan_name}\n"
+        f"Amount: ₹{order.amount:.0f}\n"
+        f"Status: <b>{status_text}</b>\n"
+        f"By: <b>{actor_display}</b>"
+    )
+    if reason:
+        text += f"\nReason: {reason}"
+
+    for admin in admins:
+        if admin.id == actor_id:
+            continue
+        try:
+            await bot.send_message(chat_id=admin.id, text=text)
+        except Exception as e:
+            logger.warning(f"Could not notify payment admin {admin.id}: {e}")
 
 
 # ── Reject ────────────────────────────────────────────────────────────────────
@@ -218,3 +261,12 @@ async def handle_reject_reason(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception as e:
         logger.warning(f"Could not notify user {order.user_id}: {e}")
+
+    await _notify_payment_admins_status(
+        bot=bot,
+        order=order,
+        actor_id=message.from_user.id,
+        actor_label=message.from_user.username or message.from_user.full_name,
+        approved=False,
+        reason=reason,
+    )
