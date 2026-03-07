@@ -148,11 +148,19 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
     except Exception as e:
         logger.error(f"Error creating XWallet payment for order {order.order_id}: {e}")
         try:
+            # Free the pending slot immediately when gateway setup fails.
+            await update_order_status(order.order_id, OrderStatus.cancelled)
+        except Exception as status_error:
+            logger.error(f"Could not cancel failed XWallet order {order.order_id}: {status_error}")
+        try:
             await loading_message.delete()
         except Exception:
             pass
-        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
-
+        await callback.message.answer(
+            f"Payment gateway is temporarily unavailable.\n"
+            f"Order #{order.order_id} was cancelled automatically.\n"
+            "Please try again in a minute."
+        )
     await callback.answer()
 
 
