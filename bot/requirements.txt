@@ -1,0 +1,21 @@
+# Core
+aiogram==3.13.1
+aiohttp==3.10.10
+
+# Database
+sqlalchemy==2.0.36
+aiosqlite==0.20.0          # SQLite async driver (dev)
+asyncpg==0.30.0            # PostgreSQL async driver (prod)
+
+# Config
+pydantic-settings==2.6.1
+
+# Scheduler
+APScheduler==3.10.4
+
+# QR Code
+qrcode[pil]==8.0
+Pillow==11.0.0
+
+# Utilities
+python-dotenv==1.0.1
