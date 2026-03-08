@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     STORE_NAME: str = "🛍 My Store"
     SUPPORT_USERNAME: str = "@support"
     XWALLET_API_KEY: str = ""
+    XWALLET_BASE_URL: str = "https://xwalletbot.shop/wallet/getway"
     PAYMENT_GATEWAY: str = "manual"  # "manual" or "xwallet"
 
     # ── Order Settings ────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
-"""
+﻿"""
 handlers/user/payment.py
-Order creation -> payment flow -> admin notification.
+Order creation -> UPI/XWallet payment flow -> admin notification.
 """
 
 import asyncio
@@ -12,26 +12,16 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from config.settings import settings
 from keyboards.keyboards import (
-    cancel_screenshot_kb,
-    main_menu_kb,
-    payment_sent_kb,
-    OrderConfirmCD,
-    UploadScreenshotCD,
-    CancelOrderCD,
+    cancel_screenshot_kb, main_menu_kb, payment_sent_kb,
+    OrderConfirmCD, UploadScreenshotCD, CancelOrderCD
 )
 from services.db_service import (
-    approve_payment,
-    count_pending_orders,
-    create_order,
-    get_order,
-    get_admins_by_role,
-    get_settings,
-    submit_screenshot,
-    update_order_status,
+    approve_payment, count_pending_orders, create_order, get_order,
+    get_admins_by_role, get_settings, submit_screenshot, update_order_status,
     log_action,
 )
 from database.models import AdminRole, BotSettings, Order, OrderStatus
-from services.xwallet_service import create_payment, get_qr_image_url, wait_for_payment
+from services.xwallet_service import create_payment, get_qr_data, wait_for_payment
 from states.states import PaymentStates
 from utils.qr_generator import generate_upi_qr
 
@@ -40,12 +30,7 @@ router = Router()
 
 
 @router.callback_query(OrderConfirmCD.filter())
-async def cb_confirm_order(
-    callback: CallbackQuery,
-    callback_data: OrderConfirmCD,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
+async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmCD, state: FSMContext, bot: Bot) -> None:
     plan_id = callback_data.plan_id
     user_id = callback.from_user.id
 
@@ -74,15 +59,11 @@ async def cb_confirm_order(
         await _handle_xwallet_payment(callback, bot, order)
     else:
         await _handle_manual_payment(callback, bot, order, bot_settings)
+    return
 
 
-async def _handle_manual_payment(
-    callback: CallbackQuery,
-    bot: Bot,
-    order: Order,
-    bot_settings: BotSettings,
-) -> None:
-    """Preserve the existing manual UPI QR and screenshot payment flow."""
+async def _handle_manual_payment(callback: CallbackQuery, bot: Bot, order: Order, bot_settings: BotSettings) -> None:
+    """Manual UPI flow: QR generation + screenshot upload."""
     _ = bot
     upi_id = bot_settings.upi_id
     qr_bytes = generate_upi_qr(
@@ -116,90 +97,116 @@ async def _handle_manual_payment(
 
 
 async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Order) -> None:
-    """Generate an XWallet QR and start background auto-verification polling."""
-    loading_message = await callback.message.answer("⏳ Generating payment QR...")
+    """XWallet flow: create payment, fetch QR data, and start polling."""
+    loading = await callback.message.answer("⏳ Payment link generate ho raha hai...")
 
     try:
-        payment_data = await create_payment(order.amount, order.order_id)
-        qr_code_id = str(payment_data.get("qr_code_id") or payment_data.get("code") or "")
-        if not qr_code_id:
-            raise ValueError("Missing qr_code_id in XWallet create_payment response")
-
-        qr_data = await get_qr_image_url(qr_code_id)
-        qr_url = qr_data.get("qr_url")
-        if not qr_url:
-            raise ValueError("Missing qr_url in XWallet QR response")
-
-        await loading_message.delete()
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=str(qr_url),
-            caption=(
-                f"💳 <b>XWallet Payment</b>\n\n"
-                f"📦 Product: <b>{order.product_name}</b>\n"
-                f"📋 Plan: <b>{order.plan_name}</b>\n"
-                f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
-                f"🆔 Order ID: <b>#{order.order_id}</b>\n\n"
-                f"10 minutes mein pay karo"
-            ),
-            reply_markup=cancel_screenshot_kb(order.order_id),
-        )
-        asyncio.create_task(_poll_and_complete(bot, order, qr_code_id))
+        payment = await create_payment(order.amount)
     except Exception as e:
         logger.error(f"Error creating XWallet payment for order {order.order_id}: {e}")
         try:
-            # Free the pending slot immediately when gateway setup fails.
-            await update_order_status(order.order_id, OrderStatus.cancelled)
-        except Exception as status_error:
-            logger.error(f"Could not cancel failed XWallet order {order.order_id}: {status_error}")
-        try:
-            await loading_message.delete()
+            await loading.delete()
         except Exception:
             pass
-        await callback.message.answer(
-            f"Payment gateway is temporarily unavailable.\n"
-            f"Order #{order.order_id} was cancelled automatically.\n"
-            "Please try again in a minute."
-        )
+        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
+        await callback.answer()
+        return
+
+    qr_code_id = str(payment.get("qr_code_id", ""))
+    if not qr_code_id:
+        try:
+            await loading.delete()
+        except Exception:
+            pass
+        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
+        await callback.answer()
+        return
+
+    try:
+        qr_data = await get_qr_data(qr_code_id)
+    except Exception as e:
+        logger.error(f"Error fetching XWallet QR data for order {order.order_id}: {e}")
+        try:
+            await loading.delete()
+        except Exception:
+            pass
+        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
+        await callback.answer()
+        return
+
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+
+    qr_url = qr_data.get("qr_url")
+    if not qr_url:
+        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
+        await callback.answer()
+        return
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Cancel Order", callback_data=f"cancel_order:{order.order_id}")
+    kb.adjust(1)
+
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        photo=str(qr_url),
+        caption=(
+            "💳 <b>Payment</b>\n\n"
+            f"📦 {order.product_name}\n"
+            f"📋 {order.plan_name}\n"
+            f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
+            f"🆔 Order: <b>#{order.order_id}</b>\n\n"
+            "UPI se QR scan karke pay karo.\n"
+            "⏳ 5 minutes mein pay karo — order expire ho jaayega."
+        ),
+        reply_markup=kb.as_markup(),
+    )
+
+    asyncio.create_task(_poll_and_complete(bot, order, qr_code_id))
     await callback.answer()
 
 
 async def _poll_and_complete(bot: Bot, order: Order, qr_code_id: str) -> None:
-    """Wait for XWallet settlement and update the order automatically."""
+    """Poll payment status and mark order paid/expired based on result."""
     try:
-        success = await wait_for_payment(qr_code_id)
+        success = await wait_for_payment(qr_code_id, timeout_minutes=5)
         latest_order = await get_order(order.order_id)
-        if not latest_order or latest_order.status != OrderStatus.pending:
+        if latest_order is None or latest_order.status.value != "pending":
             return
 
         if success:
             await approve_payment(order.order_id, admin_id=0)
-            paid_order = await get_order(order.order_id) or latest_order
             await bot.send_message(
                 chat_id=order.user_id,
-                text="✅ Payment Received! Delivering soon...",
+                text=(
+                    "✅ <b>Payment Received!</b>\n\n"
+                    f"Order <b>#{order.order_id}</b> confirmed.\n"
+                    "Aapka product jald deliver hoga. 📦"
+                ),
             )
-
             from handlers.admin.payments import _notify_order_admins
-
-            await _notify_order_admins(bot, paid_order)
+            await _notify_order_admins(bot, latest_order)
             return
 
         await update_order_status(order.order_id, OrderStatus.expired)
         await bot.send_message(
             chat_id=order.user_id,
-            text="⏰ Payment expired. Please create a new order.",
+            text=(
+                "⏰ <b>Payment Expired</b>\n\n"
+                f"Order <b>#{order.order_id}</b> ka time out ho gaya.\n"
+                "Please naya order create karein."
+            ),
         )
     except Exception as e:
         logger.error(f"Error while polling XWallet payment for order {order.order_id}: {e}")
 
 
 @router.callback_query(UploadScreenshotCD.filter())
-async def cb_upload_screenshot(
-    callback: CallbackQuery,
-    callback_data: UploadScreenshotCD,
-    state: FSMContext,
-) -> None:
+async def cb_upload_screenshot(callback: CallbackQuery, callback_data: UploadScreenshotCD, state: FSMContext) -> None:
     try:
         order_id = callback_data.order_id
         order = await get_order(order_id)
@@ -246,6 +253,7 @@ async def handle_screenshot(message: Message, state: FSMContext, bot: Bot) -> No
             )
             return
 
+        # Save screenshot file_id
         file_id = message.photo[-1].file_id
         await submit_screenshot(order_id, file_id)
     except Exception as e:
@@ -262,11 +270,12 @@ async def handle_screenshot(message: Message, state: FSMContext, bot: Bot) -> No
         reply_markup=main_menu_kb(),
     )
 
+    # Notify payment admins
     await _notify_payment_admins(bot, order, file_id)
 
 
 async def _notify_payment_admins(bot: Bot, order: Order, file_id: str) -> None:
-    """Forward screenshot and review buttons to all payment admins."""
+    """Forward screenshot + approve/reject buttons to all payment admins."""
     from keyboards.keyboards import payment_verify_kb
 
     try:
@@ -299,11 +308,7 @@ async def _notify_payment_admins(bot: Bot, order: Order, file_id: str) -> None:
 
 
 @router.callback_query(CancelOrderCD.filter())
-async def cb_cancel_order(
-    callback: CallbackQuery,
-    callback_data: CancelOrderCD,
-    state: FSMContext,
-) -> None:
+async def cb_cancel_order(callback: CallbackQuery, callback_data: CancelOrderCD, state: FSMContext) -> None:
     try:
         order_id = callback_data.order_id
         order = await get_order(order_id)
