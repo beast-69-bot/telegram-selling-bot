@@ -67,18 +67,21 @@ async def check_status(qr_code_id: str) -> str:
         logger.warning(f"XWallet check_status error for {qr_code_id}: {e}")
         return "pending"
 
-    return str(data.get("status", "pending"))
+    return str(data.get("status", "pending")).strip()
 
 
 async def wait_for_payment(qr_code_id: str, timeout_minutes: int = 5) -> bool:
     """Poll gateway status every 5 seconds until success, failure, or timeout."""
     deadline = asyncio.get_running_loop().time() + (timeout_minutes * 60)
     while asyncio.get_running_loop().time() < deadline:
-        status = await check_status(qr_code_id)
-        logger.info(f"Polling {qr_code_id}: {status}")
-        if status == "TXN_SUCCESS":
+        status_raw = await check_status(qr_code_id)
+        status = status_raw.strip().upper()
+        logger.info(f"Polling {qr_code_id}: raw={status_raw}, normalized={status}")
+
+        if status in {"TXN_SUCCESS", "SUCCESS", "PAID", "COMPLETED"}:
             return True
-        if status == "FAILED":
+        if status in {"FAILED", "TXN_FAILED", "EXPIRED", "CANCELLED"}:
             return False
+
         await asyncio.sleep(5)
     return False
