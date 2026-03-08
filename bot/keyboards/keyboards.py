@@ -61,11 +61,18 @@ class ViewPaymentCD(CallbackData, prefix="view_payment"):
 class AdminOrdersPageCD(CallbackData, prefix="admin_orders_page"):
     page: int
 
+class AdminAllOrdersPageCD(CallbackData, prefix="admin_all_orders_page"):
+    page: int
+
 class AdminDeliverCD(CallbackData, prefix="admin_deliver"):
     order_id: str
 
 class DoDeliverCD(CallbackData, prefix="do_deliver"):
     order_id: str
+
+class AdminOrderInfoCD(CallbackData, prefix="admin_order_info"):
+    order_id: str
+    page: int
 
 class AdminInfoCD(CallbackData, prefix="admin_info"):
     user_id: int
@@ -209,11 +216,13 @@ def my_orders_kb(orders: List[Order]) -> InlineKeyboardMarkup:
 # ADMIN KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def admin_panel_kb() -> InlineKeyboardMarkup:
+def admin_panel_kb(show_all_orders: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📦 Products",   callback_data="admin:products")
     builder.button(text="💳 Payments",   callback_data="admin:payments")
     builder.button(text="📬 Orders",     callback_data="admin:orders")
+    if show_all_orders:
+        builder.button(text="📚 All Orders", callback_data="admin:all_orders")
     builder.button(text="👥 Admins",     callback_data="admin:admins")
     builder.button(text="⚙️ Settings",   callback_data="admin:settings")
     builder.button(text="📊 Stats",      callback_data="admin:stats")

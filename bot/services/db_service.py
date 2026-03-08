@@ -308,6 +308,23 @@ async def get_orders_by_status(
         return list(result.scalars().all()), total
 
 
+async def get_all_orders_page(page: int = 0) -> Tuple[List[Order], int]:
+    """Paginated orders history sorted by newest first."""
+    limit = settings.ORDERS_PER_PAGE
+    async with get_session() as session:
+        total_result = await session.execute(select(func.count(Order.id)))
+        total = total_result.scalar_one()
+
+        result = await session.execute(
+            select(Order)
+            .options(selectinload(Order.user), selectinload(Order.plan))
+            .order_by(Order.created_at.desc())
+            .offset(page * limit)
+            .limit(limit)
+        )
+        return list(result.scalars().all()), total
+
+
 async def update_order_status(
     order_id: str,
     status: OrderStatus,
