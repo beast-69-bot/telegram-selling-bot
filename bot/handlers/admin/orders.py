@@ -15,6 +15,7 @@ from database.models import Order, OrderStatus
 from keyboards.keyboards import (
     AdminAllOrdersPageCD,
     AdminDeliverCD,
+    AdminMessageUserCD,
     AdminOrderInfoCD,
     AdminOrdersPageCD,
     DoDeliverCD,
@@ -29,7 +30,7 @@ from services.db_service import (
     log_action,
     mark_delivered,
 )
-from states.states import DeliverOrderStates
+from states.states import ContactUserStates, DeliverOrderStates
 
 router = Router()
 
@@ -50,8 +51,9 @@ def _status_label(status: OrderStatus) -> str:
 def _all_orders_kb(orders: list[Order], page: int, total: int):
     builder = InlineKeyboardBuilder()
     for order in orders:
+        plan = (order.plan_name or "-")[:14]
         builder.button(
-            text=f"#{order.order_id} | {_status_label(order.status)} | Rs {order.amount:.0f}",
+            text=f"#{order.order_id} | U:{order.user_id} | {plan}",
             callback_data=AdminOrderInfoCD(order_id=order.order_id, page=page).pack(),
         )
     builder.adjust(1)
@@ -216,6 +218,10 @@ async def cb_all_order_info(callback: CallbackQuery, callback_data: AdminOrderIn
 
     builder = InlineKeyboardBuilder()
     builder.button(
+        text="Message User",
+        callback_data=AdminMessageUserCD(order_id=order.order_id, page=callback_data.page).pack(),
+    )
+    builder.button(
         text="Back to All Orders",
         callback_data=AdminAllOrdersPageCD(page=callback_data.page).pack(),
     )
@@ -224,3 +230,67 @@ async def cb_all_order_info(callback: CallbackQuery, callback_data: AdminOrderIn
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
+
+
+@router.callback_query(AdminMessageUserCD.filter(), OwnerOrSuperFilter())
+async def cb_message_user(callback: CallbackQuery, callback_data: AdminMessageUserCD, state: FSMContext):
+    order = await get_order(callback_data.order_id)
+    if not order:
+        await callback.answer("Order not found.", show_alert=True)
+        return
+
+    await state.set_state(ContactUserStates.waiting_message)
+    await state.update_data(
+        contact_user_id=order.user_id,
+        contact_order_id=order.order_id,
+        contact_page=callback_data.page,
+    )
+    await callback.message.answer(
+        f"<b>Message User</b>\n\n"
+        f"Order: <b>#{order.order_id}</b>\n"
+        f"User ID: <code>{order.user_id}</code>\n\n"
+        "Ab jo bhi message/file/photo bhejoge, user ko forward ho jayega.",
+    )
+    await callback.answer()
+
+
+@router.message(ContactUserStates.waiting_message, OwnerOrSuperFilter())
+async def handle_message_user(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    user_id = data.get("contact_user_id")
+    order_id = data.get("contact_order_id")
+    page = int(data.get("contact_page", 0))
+
+    if not user_id or not order_id:
+        await state.clear()
+        await message.answer("Session expired. Please open order details again.")
+        return
+
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                "<b>Support Update</b>\n\n"
+                f"Order: <b>#{order_id}</b>"
+            ),
+        )
+        await message.copy_to(chat_id=user_id)
+        await log_action(message.from_user.id, "message_user", order_id)
+    except Exception:
+        await state.clear()
+        await message.answer("User ko message nahi gaya. User ne bot block kiya ho sakta hai.")
+        return
+
+    await state.clear()
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Back to Order",
+        callback_data=AdminOrderInfoCD(order_id=order_id, page=page).pack(),
+    )
+    builder.button(
+        text="Back to All Orders",
+        callback_data=AdminAllOrdersPageCD(page=page).pack(),
+    )
+    builder.button(text="Admin Panel", callback_data="admin:panel")
+    builder.adjust(1)
+    await message.answer("Message user ko successfully bhej diya.", reply_markup=builder.as_markup())

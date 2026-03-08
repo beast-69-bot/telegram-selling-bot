@@ -74,6 +74,10 @@ class AdminOrderInfoCD(CallbackData, prefix="admin_order_info"):
     order_id: str
     page: int
 
+class AdminMessageUserCD(CallbackData, prefix="admin_message_user"):
+    order_id: str
+    page: int
+
 class AdminInfoCD(CallbackData, prefix="admin_info"):
     user_id: int
 

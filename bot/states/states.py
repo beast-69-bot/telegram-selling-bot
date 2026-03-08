@@ -69,3 +69,7 @@ class RejectPaymentStates(StatesGroup):
 
 class DeliverOrderStates(StatesGroup):
     waiting_product = State()
+
+
+class ContactUserStates(StatesGroup):
+    waiting_message = State()
