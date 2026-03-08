@@ -122,7 +122,11 @@ async def cb_plans(callback: CallbackQuery, callback_data: PlansCD):
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except Exception:
-        # If message has a photo, need to send new message
+        # If message has media, delete old card before sending the next step.
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer(text, reply_markup=kb)
 
     await callback.answer()
@@ -157,6 +161,10 @@ async def cb_select_plan(callback: CallbackQuery, callback_data: SelectPlanCD, s
     try:
         await callback.message.edit_text(text, reply_markup=kb)
     except Exception:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer(text, reply_markup=kb)
 
     await callback.answer()

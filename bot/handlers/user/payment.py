@@ -151,7 +151,7 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
     kb.adjust(1)
 
     await callback.message.delete()
-    await callback.message.answer(
+    payment_message = await callback.message.answer(
         "💳 <b>Payment</b>\n\n"
         f"📦 {order.product_name}\n"
         f"📋 {order.plan_name}\n"
@@ -162,17 +162,35 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
         reply_markup=kb.as_markup(),
     )
 
-    asyncio.create_task(_poll_and_complete(bot, order, qr_code_id))
+    asyncio.create_task(
+        _poll_and_complete(
+            bot,
+            order,
+            qr_code_id,
+            payment_message_id=payment_message.message_id,
+        )
+    )
     await callback.answer()
 
 
-async def _poll_and_complete(bot: Bot, order: Order, qr_code_id: str) -> None:
+async def _poll_and_complete(
+    bot: Bot,
+    order: Order,
+    qr_code_id: str,
+    payment_message_id: int | None = None,
+) -> None:
     """Poll payment status and mark order paid/expired based on result."""
     try:
         success = await wait_for_payment(qr_code_id, timeout_minutes=5)
         latest_order = await get_order(order.order_id)
         if latest_order is None or latest_order.status.value != "pending":
             return
+
+        if payment_message_id is not None:
+            try:
+                await bot.delete_message(chat_id=order.user_id, message_id=payment_message_id)
+            except Exception:
+                pass
 
         if success:
             await approve_payment(order.order_id, admin_id=0)
