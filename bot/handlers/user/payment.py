@@ -55,7 +55,8 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
         await callback.answer("⚠️ Something went wrong. Please try again or contact support.", show_alert=True)
         return
 
-    if settings.PAYMENT_GATEWAY == "xwallet":
+    gateway = (getattr(bot_settings, "payment_gateway", settings.PAYMENT_GATEWAY) or "manual").lower()
+    if gateway == "xwallet":
         await _handle_xwallet_payment(callback, bot, order)
     else:
         await _handle_manual_payment(callback, bot, order, bot_settings)
@@ -157,8 +158,12 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
         f"📋 {order.plan_name}\n"
         f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
         f"🆔 Order: <b>#{order.order_id}</b>\n\n"
-        "Button tap karo → browser mein payment karo.\n"
-        "⏳ 5 minutes mein pay karo — order expire ho jaayega.",
+        "📝 <b>Steps:</b>\n"
+        "1. Neeche <b>Pay</b> button par tap karo.\n"
+        "2. Browser me payment complete karo.\n"
+        "3. Payment hone ke baad browser page <b>Refresh</b> karo.\n"
+        "4. Bot me wapas aao, verification auto ho jayega.\n\n"
+        "⏳ 5 minutes ke andar payment karo, warna order expire ho jayega.",
         reply_markup=kb.as_markup(),
     )
 

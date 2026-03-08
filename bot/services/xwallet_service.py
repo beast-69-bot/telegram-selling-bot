@@ -16,10 +16,29 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+async def _resolve_api_key() -> str:
+    """Resolve XWallet API key from DB settings with env fallback."""
+    try:
+        from services.db_service import get_settings
+
+        db_settings = await get_settings()
+        db_key = (getattr(db_settings, "xwallet_api_key", "") or "").strip()
+        if db_key:
+            return db_key
+    except Exception as e:
+        logger.warning(f"XWallet API key lookup from DB failed: {e}")
+
+    return (settings.XWALLET_API_KEY or "").strip()
+
+
 async def create_payment(amount: float) -> dict[str, Any]:
     """Create a payment request and return the full gateway response."""
     url = f"{settings.XWALLET_BASE_URL.rstrip('/')}/pay.php"
-    params = {"key": settings.XWALLET_API_KEY, "amount": f"{amount:.2f}"}
+    api_key = await _resolve_api_key()
+    if not api_key:
+        raise ValueError("XWallet API key is not configured")
+
+    params = {"key": api_key, "amount": f"{amount:.2f}"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as response:

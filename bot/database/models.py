@@ -132,6 +132,8 @@ class BotSettings(Base):
     upi_id                   = Column(String(128), default="store@upi")
     upi_name                 = Column(String(128), default="My Store")
     payment_timeout_minutes  = Column(Integer, default=10)
+    payment_gateway          = Column(String(16), default="manual")
+    xwallet_api_key          = Column(String(255), default="")
     welcome_message          = Column(Text, default="Welcome! Browse our products below.")
     maintenance_mode         = Column(Boolean, default=False)
     updated_at               = Column(DateTime, server_default=func.now(), onupdate=func.now())
