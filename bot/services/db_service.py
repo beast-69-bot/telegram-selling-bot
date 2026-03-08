@@ -362,30 +362,40 @@ async def reject_payment(order_id: str, admin_id: int, reason: str) -> bool:
 
 
 async def mark_delivered(order_id: str, admin_id: int) -> bool:
+    order = await get_order(order_id)
+    if not order or order.status != OrderStatus.paid:
+        return False
+
     result = await update_order_status(
-        order_id, OrderStatus.delivered,
+        order_id,
+        OrderStatus.delivered,
         delivered_by=admin_id,
         delivered_at=datetime.now(timezone.utc),
     )
-    # Increment product sales count
-    order = await get_order(order_id)
-    if order:
-        async with get_session() as session:
-            await session.execute(
-                update(Product)
-                .where(Product.id == order.plan.product_id)
-                .values(total_sales=Product.total_sales + 1)
+    if not result:
+        return False
+
+    async with get_session() as session:
+        await session.execute(
+            update(Product)
+            .where(Product.id == order.plan.product_id)
+            .values(total_sales=Product.total_sales + 1)
+        )
+        await session.execute(
+            update(User)
+            .where(User.id == order.user_id)
+            .values(
+                total_orders=User.total_orders + 1,
+                total_spent=User.total_spent + order.amount,
             )
-            await session.execute(
-                update(User)
-                .where(User.id == order.user_id)
-                .values(
-                    total_orders=User.total_orders + 1,
-                    total_spent=User.total_spent + order.amount,
-                )
-            )
-            await session.commit()
-    return result
+        )
+        await session.execute(
+            update(BotSettings)
+            .where(BotSettings.id == 1)
+            .values(total_earnings=BotSettings.total_earnings + order.amount)
+        )
+        await session.commit()
+    return True
 
 
 async def expire_old_orders() -> List[Order]:
@@ -488,4 +498,28 @@ async def get_stats() -> dict:
         "delivered":      delivered,
         "total_revenue":  total_revenue,
         "pending_verify": pending_verify,
+    }
+
+
+async def get_revenue_stats() -> dict:
+    """Owner/superadmin revenue dashboard numbers."""
+    async with get_session() as session:
+        settings_row = await session.execute(select(BotSettings).where(BotSettings.id == 1))
+        bot_settings = settings_row.scalar_one()
+        total_earnings = float(bot_settings.total_earnings or 0.0)
+
+        delivered_orders = (
+            await session.execute(select(func.count(Order.id)).where(Order.status == OrderStatus.delivered))
+        ).scalar_one()
+
+        pending_paid_amount = (
+            await session.execute(select(func.sum(Order.amount)).where(Order.status == OrderStatus.paid))
+        ).scalar_one() or 0.0
+
+    avg_per_delivered = (total_earnings / delivered_orders) if delivered_orders else 0.0
+    return {
+        "total_earnings": total_earnings,
+        "delivered_orders": delivered_orders,
+        "pending_paid_amount": float(pending_paid_amount),
+        "avg_per_delivered": float(avg_per_delivered),
     }

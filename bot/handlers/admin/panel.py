@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from database.models import AdminRole
 from keyboards.keyboards import ToggleBanCD, admin_panel_kb, admin_recent_users_kb, back_to_admin_kb
 from middlewares.role_filter import AnyAdminFilter, OwnerOrSuperFilter
-from services.db_service import get_admin, get_recent_users, get_stats, toggle_user_ban
+from services.db_service import get_admin, get_recent_users, get_revenue_stats, get_stats, toggle_user_ban
 
 router = Router()
 
@@ -33,9 +33,10 @@ async def cb_admin_panel(callback: CallbackQuery):
 async def _show_panel(target: Message | CallbackQuery):
     admin = await get_admin(target.from_user.id)
     show_all_orders = _can_view_all_orders(admin.role if admin else None)
+    show_revenue = _can_view_all_orders(admin.role if admin else None)
 
     text = "<b>Admin Panel</b>\n\nWhat would you like to manage?"
-    kb = admin_panel_kb(show_all_orders=show_all_orders)
+    kb = admin_panel_kb(show_all_orders=show_all_orders, show_revenue=show_revenue)
     if isinstance(target, Message):
         await target.answer(text, reply_markup=kb)
     else:
@@ -53,6 +54,20 @@ async def cb_stats(callback: CallbackQuery):
         f"Delivered: <b>{stats['delivered']}</b>\n"
         f"Total Revenue: <b>Rs {stats['total_revenue']:.0f}</b>\n"
         f"Pending Verify: <b>{stats['pending_verify']}</b>"
+    )
+    await callback.message.edit_text(text, reply_markup=back_to_admin_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:revenue", OwnerOrSuperFilter())
+async def cb_revenue(callback: CallbackQuery):
+    data = await get_revenue_stats()
+    text = (
+        "<b>Revenue Dashboard</b>\n\n"
+        f"Lifetime Earnings: <b>Rs {data['total_earnings']:.2f}</b>\n"
+        f"Delivered Orders: <b>{data['delivered_orders']}</b>\n"
+        f"Pending Paid Amount: <b>Rs {data['pending_paid_amount']:.2f}</b>\n"
+        f"Average Earning/Delivered: <b>Rs {data['avg_per_delivered']:.2f}</b>"
     )
     await callback.message.edit_text(text, reply_markup=back_to_admin_kb())
     await callback.answer()

@@ -63,6 +63,7 @@ async def _seed_defaults() -> None:
                     upi_name=settings.UPI_NAME,
                     payment_gateway=settings.PAYMENT_GATEWAY,
                     xwallet_api_key=settings.XWALLET_API_KEY,
+                    total_earnings=0.0,
                 )
             )
         else:
@@ -70,6 +71,8 @@ async def _seed_defaults() -> None:
                 current.payment_gateway = settings.PAYMENT_GATEWAY
             if not current.xwallet_api_key:
                 current.xwallet_api_key = settings.XWALLET_API_KEY
+            if current.total_earnings is None:
+                current.total_earnings = 0.0
 
         result = await session.execute(select(Admin).where(Admin.id == settings.OWNER_ID))
         if not result.scalar_one_or_none():
@@ -98,6 +101,10 @@ async def _ensure_bot_settings_columns(conn) -> None:
             await conn.execute(
                 text("ALTER TABLE bot_settings ADD COLUMN xwallet_api_key VARCHAR(255) DEFAULT ''")
             )
+        if "total_earnings" not in columns:
+            await conn.execute(
+                text("ALTER TABLE bot_settings ADD COLUMN total_earnings FLOAT DEFAULT 0")
+            )
         return
 
     await conn.execute(
@@ -110,6 +117,12 @@ async def _ensure_bot_settings_columns(conn) -> None:
         text(
             "ALTER TABLE bot_settings "
             "ADD COLUMN IF NOT EXISTS xwallet_api_key VARCHAR(255) DEFAULT ''"
+        )
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE bot_settings "
+            "ADD COLUMN IF NOT EXISTS total_earnings FLOAT DEFAULT 0"
         )
     )
 

@@ -216,19 +216,21 @@ def my_orders_kb(orders: List[Order]) -> InlineKeyboardMarkup:
 # ADMIN KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def admin_panel_kb(show_all_orders: bool = False) -> InlineKeyboardMarkup:
+def admin_panel_kb(show_all_orders: bool = False, show_revenue: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📦 Products",   callback_data="admin:products")
     builder.button(text="💳 Payments",   callback_data="admin:payments")
     builder.button(text="📬 Orders",     callback_data="admin:orders")
     if show_all_orders:
         builder.button(text="📚 All Orders", callback_data="admin:all_orders")
+    if show_revenue:
+        builder.button(text="💰 Revenue", callback_data="admin:revenue")
     builder.button(text="👥 Admins",     callback_data="admin:admins")
     builder.button(text="⚙️ Settings",   callback_data="admin:settings")
     builder.button(text="📊 Stats",      callback_data="admin:stats")
     builder.button(text="📢 Broadcast",  callback_data="admin:broadcast")
     builder.button(text="🚫 Ban Users",  callback_data="admin:ban")
-    builder.adjust(2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
