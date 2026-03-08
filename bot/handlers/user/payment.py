@@ -21,7 +21,7 @@ from services.db_service import (
     log_action,
 )
 from database.models import AdminRole, BotSettings, Order, OrderStatus
-from services.xwallet_service import create_payment, get_qr_data, wait_for_payment
+from services.xwallet_service import create_payment, wait_for_payment
 from states.states import PaymentStates
 from utils.qr_generator import generate_upi_qr
 
@@ -101,7 +101,7 @@ async def _handle_manual_payment(callback: CallbackQuery, bot: Bot, order: Order
 
 
 async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Order) -> None:
-    """XWallet flow: create payment, fetch QR data, and start polling."""
+    """XWallet flow: create payment, send payment-link CTA, and start polling."""
     loading = await callback.message.answer("⏳ Payment link generate ho raha hai...")
 
     try:
@@ -127,24 +127,12 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
         return
 
     try:
-        qr_data = await get_qr_data(qr_code_id)
-    except Exception as e:
-        logger.error(f"Error fetching XWallet QR data for order {order.order_id}: {e}")
-        try:
-            await loading.delete()
-        except Exception:
-            pass
-        await callback.message.answer("⚠️ Payment gateway error. Please try again.")
-        await callback.answer()
-        return
-
-    try:
         await loading.delete()
     except Exception:
         pass
 
-    qr_url = qr_data.get("qr_url")
-    if not qr_url:
+    payment_link = str(payment.get("payment_link", ""))
+    if not payment_link:
         await callback.message.answer("⚠️ Payment gateway error. Please try again.")
         await callback.answer()
         return
@@ -152,21 +140,25 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="❌ Cancel Order", callback_data=CancelOrderCD(order_id=order.order_id).pack())
+    kb.button(
+        text=f"💳 Pay ₹{order.amount:.0f} — Tap Here",
+        url=payment_link,
+    )
+    kb.button(
+        text="❌ Cancel Order",
+        callback_data=CancelOrderCD(order_id=order.order_id).pack(),
+    )
     kb.adjust(1)
 
     await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=str(qr_url),
-        caption=(
-            "💳 <b>Payment</b>\n\n"
-            f"📦 {order.product_name}\n"
-            f"📋 {order.plan_name}\n"
-            f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
-            f"🆔 Order: <b>#{order.order_id}</b>\n\n"
-            "UPI se QR scan karke pay karo.\n"
-            "⏳ 5 minutes mein pay karo — order expire ho jaayega."
-        ),
+    await callback.message.answer(
+        "💳 <b>Payment</b>\n\n"
+        f"📦 {order.product_name}\n"
+        f"📋 {order.plan_name}\n"
+        f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
+        f"🆔 Order: <b>#{order.order_id}</b>\n\n"
+        "Button tap karo → browser mein payment karo.\n"
+        "⏳ 5 minutes mein pay karo — order expire ho jaayega.",
         reply_markup=kb.as_markup(),
     )
 
