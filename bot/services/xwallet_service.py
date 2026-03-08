@@ -65,9 +65,9 @@ async def check_status(qr_code_id: str) -> str:
                 data = await response.json(content_type=None)
     except Exception as e:
         logger.warning(f"XWallet check_status error for {qr_code_id}: {e}")
-        raise
+        return "pending"
 
-    return str(data.get("status", "FAILED"))
+    return str(data.get("status", "pending"))
 
 
 async def wait_for_payment(qr_code_id: str, timeout_minutes: int = 5) -> bool:

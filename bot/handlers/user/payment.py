@@ -59,6 +59,10 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
         await _handle_xwallet_payment(callback, bot, order)
     else:
         await _handle_manual_payment(callback, bot, order, bot_settings)
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     return
 
 
@@ -148,7 +152,7 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="❌ Cancel Order", callback_data=f"cancel_order:{order.order_id}")
+    kb.button(text="❌ Cancel Order", callback_data=CancelOrderCD(order_id=order.order_id).pack())
     kb.adjust(1)
 
     await callback.message.delete()
