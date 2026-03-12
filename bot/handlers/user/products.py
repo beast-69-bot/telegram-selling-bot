@@ -19,6 +19,17 @@ from states.states import ProductSearchStates
 router = Router()
 
 
+async def _edit_or_send(callback: CallbackQuery, text: str, reply_markup):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 # ── Product Listing (Paginated) ───────────────────────────────────────────────
 
 @router.callback_query(BrowseProductsCD.filter())
@@ -39,7 +50,7 @@ async def cb_browse_products(callback: CallbackQuery, callback_data: BrowseProdu
     text = "🛍 <b>Our Products</b>\n\nSelect a product to view details:"
     kb = products_page_kb(products, page, total)
 
-    await callback.message.edit_text(text, reply_markup=kb)
+    await _edit_or_send(callback, text, kb)
     await callback.answer()
 
 
@@ -87,9 +98,9 @@ async def cb_product_detail(callback: CallbackQuery, callback_data: ProductCD, s
                 reply_markup=kb,
             )
         except Exception:
-            await callback.message.edit_text(text, reply_markup=kb)
+            await _edit_or_send(callback, text, kb)
     else:
-        await callback.message.edit_text(text, reply_markup=kb)
+        await _edit_or_send(callback, text, kb)
 
     await callback.answer()
 
@@ -119,15 +130,7 @@ async def cb_plans(callback: CallbackQuery, callback_data: PlansCD):
     text = f"<b>{product.name}</b>\n\n💳 <b>Select a Plan:</b>"
     kb = plans_kb(active_plans, product_id)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        # If message has media, delete old card before sending the next step.
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(text, reply_markup=kb)
+    await _edit_or_send(callback, text, kb)
 
     await callback.answer()
 
@@ -158,14 +161,7 @@ async def cb_select_plan(callback: CallbackQuery, callback_data: SelectPlanCD, s
     )
     kb = order_confirm_kb(plan_id)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(text, reply_markup=kb)
+    await _edit_or_send(callback, text, kb)
 
     await callback.answer()
 
@@ -175,10 +171,11 @@ async def cb_select_plan(callback: CallbackQuery, callback_data: SelectPlanCD, s
 @router.callback_query(F.data == "search_products")
 async def cb_search_products(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProductSearchStates.waiting_query)
-    await callback.message.edit_text(
+    await _edit_or_send(
+        callback,
         "🔍 <b>Search Products</b>\n\n"
         "Enter the name or keywords of the product you're looking for:",
-        reply_markup=main_menu_kb()
+        main_menu_kb(),
     )
     await callback.answer()
 
@@ -213,7 +210,7 @@ async def handle_search_query(message: Message, state: FSMContext):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     for p in products[:10]: # Limit to 10 results
-        kb.button(text=f"🟢 {p.name}", callback_data=f"product:{p.id}")
+        kb.button(text=f"🟢 {p.name}", callback_data=ProductCD(id=p.id).pack())
     
     kb.button(text="🏠 Main Menu", callback_data="main_menu")
     kb.adjust(1)

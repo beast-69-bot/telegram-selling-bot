@@ -23,6 +23,17 @@ STATUS_TEXT = {
 }
 
 
+async def _edit_or_send(callback: CallbackQuery, text: str, reply_markup):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 @router.message(Command("myorders"))
 @router.callback_query(F.data == "my_orders")
 async def show_orders(event: Message | CallbackQuery):
@@ -37,7 +48,7 @@ async def show_orders(event: Message | CallbackQuery):
         kb = my_orders_kb(orders)
 
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=kb)
+        await _edit_or_send(event, text, kb)
         await event.answer()
     else:
         await event.answer(text, reply_markup=kb)
@@ -72,5 +83,5 @@ async def order_detail(callback: CallbackQuery, callback_data: OrderDetailCD):
     if order.reject_reason:
         text += f"\n❌ Reject reason: {order.reject_reason}"
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await _edit_or_send(callback, text, builder.as_markup())
     await callback.answer()

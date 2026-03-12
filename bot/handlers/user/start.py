@@ -16,6 +16,17 @@ from services.db_service import get_settings, get_user
 router = Router()
 
 
+async def _edit_or_send(callback: CallbackQuery, text: str, reply_markup):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 async def _send_main_menu(target: Message | CallbackQuery, state: FSMContext, edit: bool = False):
     await state.clear()
     bot_settings = await get_settings()
@@ -27,7 +38,7 @@ async def _send_main_menu(target: Message | CallbackQuery, state: FSMContext, ed
     kb = main_menu_kb()
 
     if edit and isinstance(target, CallbackQuery):
-        await target.message.edit_text(text, reply_markup=kb)
+        await _edit_or_send(target, text, kb)
     else:
         msg = target if isinstance(target, Message) else target.message
         await msg.answer(text, reply_markup=kb)
@@ -72,12 +83,13 @@ async def cb_support(callback: CallbackQuery):
     kb.button(text="🏠 Main Menu", callback_data="main_menu")
     kb.adjust(1)
 
-    await callback.message.edit_text(
+    await _edit_or_send(
+        callback,
         f"💬 <b>Support</b>\n\n"
         f"Contact us at {settings.SUPPORT_USERNAME}\n\n"
         f"You can also send a message directly in this chat and an admin will be notified.\n\n"
         f"Our team will assist you with any issues.",
-        reply_markup=kb.as_markup(),
+        kb.as_markup(),
     )
     await callback.answer()
 
@@ -107,7 +119,7 @@ async def cb_profile(callback: CallbackQuery, state: FSMContext):
     kb.button(text="🏠 Main Menu", callback_data="main_menu")
     kb.adjust(1)
     
-    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    await _edit_or_send(callback, text, kb.as_markup())
     await callback.answer()
 
 
