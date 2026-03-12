@@ -71,6 +71,7 @@ class Product(Base):
 
     id           = Column(Integer, primary_key=True, autoincrement=True)
     name         = Column(String(128), nullable=False)
+    emoji        = Column(String(16), nullable=False, default="🛍")
     image_file_id = Column(String(256), nullable=True)   # Telegram file_id
     tagline      = Column(String(256), nullable=True)
     description  = Column(Text, nullable=True)

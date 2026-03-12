@@ -29,7 +29,7 @@ async def cb_admins_list(callback: CallbackQuery):
         uname = a.username or str(a.id)
         builder.button(
             text=f"{a.role.value} — @{uname}",
-            callback_data=f"admin_info:{a.id}",
+            callback_data=AdminInfoCD(user_id=a.id).pack(),
         )
     builder.button(text="➕ Add Admin",  callback_data="admin_add_admin")
     builder.button(text="◀️ Admin Panel", callback_data="admin:panel")
@@ -55,7 +55,7 @@ async def cb_admin_info(callback: CallbackQuery, callback_data: AdminInfoCD):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     if admin.role != AdminRole.owner:
-        builder.button(text="🗑 Remove Admin", callback_data=f"remove_admin:{admin_user_id}")
+        builder.button(text="🗑 Remove Admin", callback_data=RemoveAdminCD(user_id=admin_user_id).pack())
     builder.button(text="◀️ Back", callback_data="admin:admins")
     builder.adjust(1)
 

@@ -177,12 +177,17 @@ async def search_products(query: str) -> List[Product]:
 
 
 async def create_product(
-    name: str, tagline: str, description: str,
-    image_file_id: Optional[str], category: str, created_by: int
+    name: str,
+    emoji: str,
+    tagline: str,
+    description: str,
+    image_file_id: Optional[str],
+    category: str,
+    created_by: int,
 ) -> Product:
     async with get_session() as session:
         product = Product(
-            name=name, tagline=tagline, description=description,
+            name=name, emoji=emoji, tagline=tagline, description=description,
             image_file_id=image_file_id, category=category, created_by=created_by,
         )
         session.add(product)

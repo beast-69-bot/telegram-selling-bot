@@ -36,6 +36,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_bot_settings_columns(conn)
+        await _ensure_product_columns(conn)
 
     await _seed_defaults()
     logger.info("Database initialized")
@@ -123,6 +124,25 @@ async def _ensure_bot_settings_columns(conn) -> None:
         text(
             "ALTER TABLE bot_settings "
             "ADD COLUMN IF NOT EXISTS total_earnings FLOAT DEFAULT 0"
+        )
+    )
+
+
+async def _ensure_product_columns(conn) -> None:
+    """Add new Product columns for older deployments without migrations."""
+    if "sqlite" in settings.DATABASE_URL:
+        result = await conn.execute(text("PRAGMA table_info(products)"))
+        columns = {row[1] for row in result.fetchall()}
+        if "emoji" not in columns:
+            await conn.execute(
+                text("ALTER TABLE products ADD COLUMN emoji VARCHAR(16) DEFAULT '🛍' NOT NULL")
+            )
+        return
+
+    await conn.execute(
+        text(
+            "ALTER TABLE products "
+            "ADD COLUMN IF NOT EXISTS emoji VARCHAR(16) DEFAULT '🛍'"
         )
     )
 

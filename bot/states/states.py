@@ -20,6 +20,7 @@ class ProductSearchStates(StatesGroup):
 
 class AddProductStates(StatesGroup):
     name        = State()
+    emoji       = State()
     image       = State()
     tagline     = State()
     description = State()

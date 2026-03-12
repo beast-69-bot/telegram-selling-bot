@@ -10,17 +10,33 @@ from aiogram.types import CallbackQuery, Message
 
 from keyboards.keyboards import (
     admin_product_actions_kb, admin_products_kb, back_to_admin_kb,
-    AdminProductCD, AdminAddPlanCD, AdminDeleteProductCD, ConfirmDeleteProductCD
+    AdminProductCD, AdminAddPlanCD, AdminDeleteProductCD, ConfirmDeleteProductCD,
+    AdminEditProductCD,
 )
 from middlewares.role_filter import ProductAdminFilter
 from services.db_service import (
     add_plan, create_product, delete_product, get_all_products,
     get_product, log_action, update_product,
 )
-from states.states import AddPlanStates, AddProductStates
+from states.states import AddPlanStates, AddProductStates, EditProductStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _edit_fields_kb(product_id: int):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Edit Emoji", callback_data="admin_edit_field:emoji")
+    builder.button(text="Edit Name", callback_data="admin_edit_field:name")
+    builder.button(text="Edit Tagline", callback_data="admin_edit_field:tagline")
+    builder.button(text="Edit Description", callback_data="admin_edit_field:description")
+    builder.button(text="Edit Category", callback_data="admin_edit_field:category")
+    builder.button(text="Toggle Active", callback_data="admin_edit_field:is_active")
+    builder.button(text="Back", callback_data=AdminProductCD(id=product_id).pack())
+    builder.adjust(2, 2, 2, 1)
+    return builder.as_markup()
 
 
 # ── Product List ──────────────────────────────────────────────────────────────
@@ -49,7 +65,7 @@ async def cb_product_actions(callback: CallbackQuery, callback_data: AdminProduc
     ) or "  No plans yet"
 
     text = (
-        f"📦 <b>{product.name}</b>\n"
+        f"{product.emoji or '🛍'} <b>{product.name}</b>\n"
         f"Category: {product.category}\n"
         f"Status: {'✅ Active' if product.is_active else '❌ Inactive'}\n\n"
         f"<b>Plans:</b>\n{plans_text}"
@@ -58,12 +74,96 @@ async def cb_product_actions(callback: CallbackQuery, callback_data: AdminProduc
     await callback.answer()
 
 
+@router.callback_query(AdminEditProductCD.filter(), ProductAdminFilter())
+async def cb_edit_product_start(callback: CallbackQuery, callback_data: AdminEditProductCD, state: FSMContext):
+    product_id = callback_data.id
+    product = await get_product(product_id)
+    if not product:
+        await callback.answer("Product not found.", show_alert=True)
+        return
+
+    await state.set_state(EditProductStates.choosing_field)
+    await state.update_data(edit_product_id=product_id)
+    await callback.message.edit_text(
+        f"<b>Edit Product</b>\n\n"
+        f"Product: <b>{product.name}</b>\n\n"
+        f"Choose what to update:",
+        reply_markup=_edit_fields_kb(product_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_edit_field:"), EditProductStates.choosing_field, ProductAdminFilter())
+async def cb_choose_edit_field(callback: CallbackQuery, state: FSMContext):
+    field = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    product_id = data.get("edit_product_id")
+    product = await get_product(product_id) if product_id else None
+    if not product_id or not product:
+        await state.clear()
+        await callback.answer("Edit session expired.", show_alert=True)
+        return
+
+    if field == "is_active":
+        await update_product(product_id, is_active=not product.is_active)
+        await log_action(callback.from_user.id, "edit_product", str(product_id), "toggle_active")
+        updated = await get_product(product_id)
+        status = "active" if updated and updated.is_active else "inactive"
+        await state.clear()
+        await callback.message.edit_text(
+            f"Product <b>{product.name}</b> is now <b>{status}</b>.",
+            reply_markup=admin_product_actions_kb(product_id),
+        )
+        await callback.answer("Product status updated.")
+        return
+
+    labels = {
+        "emoji": "new product emoji",
+        "name": "new product name",
+        "tagline": "new tagline",
+        "description": "new description",
+        "category": "new category",
+    }
+    if field not in labels:
+        await callback.answer("Invalid edit field.", show_alert=True)
+        return
+
+    await state.set_state(EditProductStates.new_value)
+    await state.update_data(edit_field=field)
+    await callback.message.answer(f"Send the {labels[field]} for <b>{product.name}</b>:")
+    await callback.answer()
+
+
+@router.message(EditProductStates.new_value, ProductAdminFilter())
+async def step_edit_product_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    product_id = data.get("edit_product_id")
+    field = data.get("edit_field")
+    if not product_id or not field:
+        await state.clear()
+        await message.answer("Edit session expired.", reply_markup=back_to_admin_kb())
+        return
+
+    value = message.text.strip()
+    if not value:
+        await message.answer("Value cannot be empty. Please send a valid value.")
+        return
+
+    await update_product(product_id, **{field: value})
+    await log_action(message.from_user.id, "edit_product", str(product_id), field)
+    await state.clear()
+    await message.answer(
+        f"Product updated successfully.\n\nField: <b>{field}</b>\nValue: <b>{value}</b>",
+        reply_markup=admin_product_actions_kb(product_id),
+    )
+
+
 # ── Add Product FSM ───────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "admin_add_product", ProductAdminFilter())
 async def cb_add_product_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddProductStates.name)
-    await callback.message.answer("📦 <b>Add New Product</b>\n\nStep 1/5: Send the <b>product name</b>:")
+    await callback.message.answer("📦 <b>Add New Product</b>\n\nStep 1/6: Send the <b>product name</b>:")
     await callback.answer()
 
 
@@ -74,10 +174,29 @@ async def step_name(message: Message, state: FSMContext):
         await message.answer("Product name must be between 1 and 128 characters. Please try again:")
         return
     await state.update_data(name=name)
+    await state.set_state(AddProductStates.emoji)
+    try:
+        await message.answer(
+            "Step 2/6: Send a <b>custom emoji</b> for this product button.\n"
+            "Examples: 🎬 🎮 💻 📺 🔐\n"
+            "Or send /skip to use 🛍."
+        )
+    except Exception as e:
+        logger.exception("Error sending message")
+
+
+@router.message(AddProductStates.emoji, ProductAdminFilter())
+async def step_emoji(message: Message, state: FSMContext):
+    emoji = "🛍" if message.text == "/skip" else message.text.strip()
+    if not emoji:
+        await message.answer("Please send one emoji or /skip.")
+        return
+
+    await state.update_data(emoji=emoji[:8])
     await state.set_state(AddProductStates.image)
     try:
         await message.answer(
-            "Step 2/5: Send a <b>preview image</b> for this product.\n"
+            "Step 3/6: Send a <b>preview image</b> for this product.\n"
             "Or send /skip to skip."
         )
     except Exception as e:
@@ -93,7 +212,7 @@ async def step_image(message: Message, state: FSMContext):
         await state.update_data(image_file_id=None)
 
     await state.set_state(AddProductStates.tagline)
-    await message.answer("Step 3/5: Send a <b>tagline</b> (short description, e.g. 'Pre Order Available'):")
+    await message.answer("Step 4/6: Send a <b>tagline</b> (short description, e.g. 'Pre Order Available'):")
 
 
 @router.message(AddProductStates.tagline, ProductAdminFilter())
@@ -101,7 +220,7 @@ async def step_tagline(message: Message, state: FSMContext):
     text = message.text.strip() if message.text != "/skip" else ""
     await state.update_data(tagline=text)
     await state.set_state(AddProductStates.description)
-    await message.answer("Step 4/5: Send the <b>product description</b> (details, validity, warranty, etc.):")
+    await message.answer("Step 5/6: Send the <b>product description</b> (details, validity, warranty, etc.):")
 
 
 @router.message(AddProductStates.description, ProductAdminFilter())
@@ -109,7 +228,7 @@ async def step_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text.strip())
     await state.set_state(AddProductStates.category)
     await message.answer(
-        "Step 5/5: Send the <b>category</b> (e.g. OTT, Software, Gaming).\n"
+        "Step 6/6: Send the <b>category</b> (e.g. OTT, Software, Gaming).\n"
         "Or send /skip for 'General':"
     )
 
@@ -178,6 +297,7 @@ async def _save_product(message: Message, state: FSMContext):
 
     product = await create_product(
         name=data["name"],
+        emoji=data.get("emoji", "🛍"),
         tagline=data.get("tagline", ""),
         description=data.get("description", ""),
         image_file_id=data.get("image_file_id"),
@@ -191,7 +311,7 @@ async def _save_product(message: Message, state: FSMContext):
     await log_action(message.from_user.id, "add_product", str(product.id), product.name)
     await message.answer(
         f"✅ <b>Product Added!</b>\n\n"
-        f"<b>{product.name}</b> with {len(data['plans'])} plans created successfully.",
+        f"{product.emoji} <b>{product.name}</b> with {len(data['plans'])} plans created successfully.",
         reply_markup=back_to_admin_kb(),
     )
 

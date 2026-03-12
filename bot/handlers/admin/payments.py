@@ -46,7 +46,7 @@ async def cb_payments_menu(callback: CallbackQuery):
     for o in orders:
         builder.button(
             text=f"#{o.order_id} — ₹{o.amount:.0f} — {o.product_name[:20]}",
-            callback_data=f"view_payment:{o.order_id}",
+            callback_data=ViewPaymentCD(order_id=o.order_id).pack(),
         )
     builder.button(text="◀️ Admin Panel", callback_data="admin:panel")
     builder.adjust(1)

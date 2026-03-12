@@ -138,9 +138,10 @@ def products_page_kb(products: List[Product], page: int, total: int) -> InlineKe
     builder = InlineKeyboardBuilder()
 
     for product in products:
-        status = "Red" if not product.is_active else "Green"
+        status = "🔴" if not product.is_active else "🟢"
+        emoji = product.emoji or "🛍"
         builder.button(
-            text=f"{status} {product.name}",
+            text=f"{status} {emoji} {product.name}",
             callback_data=ProductCD(id=product.id).pack(),
         )
 
@@ -260,8 +261,9 @@ def admin_panel_kb(show_all_orders: bool = False, show_revenue: bool = False) ->
 def admin_products_kb(products: List[Product]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for product in products:
-        status = "Active" if product.is_active else "Off"
-        builder.button(text=f"{status} {product.name}", callback_data=AdminProductCD(id=product.id).pack())
+        status = "✅" if product.is_active else "❌"
+        emoji = product.emoji or "🛍"
+        builder.button(text=f"{status} {emoji} {product.name}", callback_data=AdminProductCD(id=product.id).pack())
     builder.button(text="Add Product", callback_data="admin_add_product")
     builder.button(text="Back", callback_data="admin:panel")
     builder.adjust(1)
