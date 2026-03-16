@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 
 from services.db_service import expire_old_orders
+from services.order_feed_service import sync_order_feed
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ async def _check_expired_orders(bot: Bot) -> None:
             )
         except Exception as e:
             logger.warning(f"Could not send expiry notice to {order.user_id}: {e}")
+        await sync_order_feed(bot, order.order_id)
 
     if expired:
         logger.info(f"Expired {len(expired)} orders")

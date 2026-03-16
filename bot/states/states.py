@@ -10,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 class PaymentStates(StatesGroup):
     waiting_screenshot = State()
+    waiting_requirements = State()
 
 
 class ProductSearchStates(StatesGroup):
@@ -24,6 +25,7 @@ class AddProductStates(StatesGroup):
     image       = State()
     tagline     = State()
     description = State()
+    requirements = State()
     category    = State()
     plan_count  = State()
     plan_name   = State()

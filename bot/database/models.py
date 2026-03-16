@@ -75,6 +75,7 @@ class Product(Base):
     image_file_id = Column(String(256), nullable=True)   # Telegram file_id
     tagline      = Column(String(256), nullable=True)
     description  = Column(Text, nullable=True)
+    requirements_text = Column(Text, nullable=True)
     category     = Column(String(64), default="General")
     is_active    = Column(Boolean, default=True)
     sort_order   = Column(Integer, default=0)
@@ -114,6 +115,10 @@ class Order(Base):
     upi_id              = Column(String(128), nullable=False)  # UPI at time of order
     status              = Column(Enum(OrderStatus), default=OrderStatus.pending)
     screenshot_file_id  = Column(String(256), nullable=True)
+    requirements_text_snapshot = Column(Text, nullable=True)
+    customer_requirements_response = Column(Text, nullable=True)
+    requirements_received = Column(Boolean, default=True)
+    channel_message_id   = Column(BigInteger, nullable=True)
     verified_by         = Column(BigInteger, nullable=True)
     delivered_by        = Column(BigInteger, nullable=True)
     reject_reason       = Column(String(256), nullable=True)
@@ -135,6 +140,7 @@ class BotSettings(Base):
     payment_timeout_minutes  = Column(Integer, default=10)
     payment_gateway          = Column(String(16), default="manual")
     xwallet_api_key          = Column(String(255), default="")
+    order_feed_chat_id       = Column(String(64), nullable=True)
     total_earnings           = Column(Float, default=0.0)
     welcome_message          = Column(Text, default="Welcome! Browse our products below.")
     maintenance_mode         = Column(Boolean, default=False)

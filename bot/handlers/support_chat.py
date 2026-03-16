@@ -14,6 +14,7 @@ from aiogram.types import Message
 
 from middlewares.role_filter import AnyAdminFilter
 from services.db_service import get_admin, get_all_admins
+from services.order_feed_service import broadcast_admin_support_reply
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -77,6 +78,7 @@ async def handle_admin_support_reply(message: Message, bot: Bot):
             from_chat_id=message.chat.id,
             message_id=message.message_id,
         )
+        await broadcast_admin_support_reply(bot, message, user_id)
         await message.reply("Reply sent to user.")
     except Exception as e:
         logger.warning(f"Could not send admin reply to user {user_id}: {e}")

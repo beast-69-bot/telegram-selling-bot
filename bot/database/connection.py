@@ -37,6 +37,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_bot_settings_columns(conn)
         await _ensure_product_columns(conn)
+        await _ensure_order_columns(conn)
 
     await _seed_defaults()
     logger.info("Database initialized")
@@ -102,6 +103,10 @@ async def _ensure_bot_settings_columns(conn) -> None:
             await conn.execute(
                 text("ALTER TABLE bot_settings ADD COLUMN xwallet_api_key VARCHAR(255) DEFAULT ''")
             )
+        if "order_feed_chat_id" not in columns:
+            await conn.execute(
+                text("ALTER TABLE bot_settings ADD COLUMN order_feed_chat_id VARCHAR(64)")
+            )
         if "total_earnings" not in columns:
             await conn.execute(
                 text("ALTER TABLE bot_settings ADD COLUMN total_earnings FLOAT DEFAULT 0")
@@ -123,6 +128,12 @@ async def _ensure_bot_settings_columns(conn) -> None:
     await conn.execute(
         text(
             "ALTER TABLE bot_settings "
+            "ADD COLUMN IF NOT EXISTS order_feed_chat_id VARCHAR(64)"
+        )
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE bot_settings "
             "ADD COLUMN IF NOT EXISTS total_earnings FLOAT DEFAULT 0"
         )
     )
@@ -137,12 +148,71 @@ async def _ensure_product_columns(conn) -> None:
             await conn.execute(
                 text("ALTER TABLE products ADD COLUMN emoji VARCHAR(16) DEFAULT '🛍' NOT NULL")
             )
+        if "requirements_text" not in columns:
+            await conn.execute(
+                text("ALTER TABLE products ADD COLUMN requirements_text TEXT")
+            )
         return
 
     await conn.execute(
         text(
             "ALTER TABLE products "
             "ADD COLUMN IF NOT EXISTS emoji VARCHAR(16) DEFAULT '🛍'"
+        )
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE products "
+            "ADD COLUMN IF NOT EXISTS requirements_text TEXT"
+        )
+    )
+
+
+async def _ensure_order_columns(conn) -> None:
+    """Add new Order columns for older deployments without migrations."""
+    if "sqlite" in settings.DATABASE_URL:
+        result = await conn.execute(text("PRAGMA table_info(orders)"))
+        columns = {row[1] for row in result.fetchall()}
+        if "requirements_text_snapshot" not in columns:
+            await conn.execute(
+                text("ALTER TABLE orders ADD COLUMN requirements_text_snapshot TEXT")
+            )
+        if "customer_requirements_response" not in columns:
+            await conn.execute(
+                text("ALTER TABLE orders ADD COLUMN customer_requirements_response TEXT")
+            )
+        if "requirements_received" not in columns:
+            await conn.execute(
+                text("ALTER TABLE orders ADD COLUMN requirements_received BOOLEAN DEFAULT 1 NOT NULL")
+            )
+        if "channel_message_id" not in columns:
+            await conn.execute(
+                text("ALTER TABLE orders ADD COLUMN channel_message_id BIGINT")
+            )
+        return
+
+    await conn.execute(
+        text(
+            "ALTER TABLE orders "
+            "ADD COLUMN IF NOT EXISTS requirements_text_snapshot TEXT"
+        )
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE orders "
+            "ADD COLUMN IF NOT EXISTS customer_requirements_response TEXT"
+        )
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE orders "
+            "ADD COLUMN IF NOT EXISTS requirements_received BOOLEAN DEFAULT TRUE"
+        )
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE orders "
+            "ADD COLUMN IF NOT EXISTS channel_message_id BIGINT"
         )
     )
 

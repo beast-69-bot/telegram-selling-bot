@@ -32,10 +32,11 @@ def _edit_fields_kb(product_id: int):
     builder.button(text="Edit Name", callback_data="admin_edit_field:name")
     builder.button(text="Edit Tagline", callback_data="admin_edit_field:tagline")
     builder.button(text="Edit Description", callback_data="admin_edit_field:description")
+    builder.button(text="Edit Requirements", callback_data="admin_edit_field:requirements_text")
     builder.button(text="Edit Category", callback_data="admin_edit_field:category")
     builder.button(text="Toggle Active", callback_data="admin_edit_field:is_active")
     builder.button(text="Back", callback_data=AdminProductCD(id=product_id).pack())
-    builder.adjust(2, 2, 2, 1)
+    builder.adjust(2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -68,6 +69,7 @@ async def cb_product_actions(callback: CallbackQuery, callback_data: AdminProduc
         f"{product.emoji or '🛍'} <b>{product.name}</b>\n"
         f"Category: {product.category}\n"
         f"Status: {'✅ Active' if product.is_active else '❌ Inactive'}\n\n"
+        f"<b>Requirements:</b>\n{product.requirements_text or 'No extra requirements'}\n\n"
         f"<b>Plans:</b>\n{plans_text}"
     )
     await callback.message.edit_text(text, reply_markup=admin_product_actions_kb(product_id))
@@ -122,6 +124,7 @@ async def cb_choose_edit_field(callback: CallbackQuery, state: FSMContext):
         "name": "new product name",
         "tagline": "new tagline",
         "description": "new description",
+        "requirements_text": "new requirements text (/skip to clear)",
         "category": "new category",
     }
     if field not in labels:
@@ -145,7 +148,9 @@ async def step_edit_product_value(message: Message, state: FSMContext):
         return
 
     value = message.text.strip()
-    if not value:
+    if field == "requirements_text" and message.text == "/skip":
+        value = ""
+    if not value and field != "requirements_text":
         await message.answer("Value cannot be empty. Please send a valid value.")
         return
 
@@ -163,7 +168,7 @@ async def step_edit_product_value(message: Message, state: FSMContext):
 @router.callback_query(F.data == "admin_add_product", ProductAdminFilter())
 async def cb_add_product_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddProductStates.name)
-    await callback.message.answer("📦 <b>Add New Product</b>\n\nStep 1/6: Send the <b>product name</b>:")
+    await callback.message.answer("📦 <b>Add New Product</b>\n\nStep 1/7: Send the <b>product name</b>:")
     await callback.answer()
 
 
@@ -177,7 +182,7 @@ async def step_name(message: Message, state: FSMContext):
     await state.set_state(AddProductStates.emoji)
     try:
         await message.answer(
-            "Step 2/6: Send a <b>custom emoji</b> for this product button.\n"
+            "Step 2/7: Send a <b>custom emoji</b> for this product button.\n"
             "Examples: 🎬 🎮 💻 📺 🔐\n"
             "Or send /skip to use 🛍."
         )
@@ -196,7 +201,7 @@ async def step_emoji(message: Message, state: FSMContext):
     await state.set_state(AddProductStates.image)
     try:
         await message.answer(
-            "Step 3/6: Send a <b>preview image</b> for this product.\n"
+            "Step 3/7: Send a <b>preview image</b> for this product.\n"
             "Or send /skip to skip."
         )
     except Exception as e:
@@ -212,7 +217,7 @@ async def step_image(message: Message, state: FSMContext):
         await state.update_data(image_file_id=None)
 
     await state.set_state(AddProductStates.tagline)
-    await message.answer("Step 4/6: Send a <b>tagline</b> (short description, e.g. 'Pre Order Available'):")
+    await message.answer("Step 4/7: Send a <b>tagline</b> (short description, e.g. 'Pre Order Available'):")
 
 
 @router.message(AddProductStates.tagline, ProductAdminFilter())
@@ -220,15 +225,27 @@ async def step_tagline(message: Message, state: FSMContext):
     text = message.text.strip() if message.text != "/skip" else ""
     await state.update_data(tagline=text)
     await state.set_state(AddProductStates.description)
-    await message.answer("Step 5/6: Send the <b>product description</b> (details, validity, warranty, etc.):")
+    await message.answer("Step 5/7: Send the <b>product description</b> (details, validity, warranty, etc.):")
 
 
 @router.message(AddProductStates.description, ProductAdminFilter())
 async def step_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text.strip())
+    await state.set_state(AddProductStates.requirements)
+    await message.answer(
+        "Step 6/7: Send <b>requirements text</b> that user must submit after payment.\n"
+        "Example: account email, profile name, login ID, screenshot details.\n"
+        "Or send /skip if no extra info is needed."
+    )
+
+
+@router.message(AddProductStates.requirements, ProductAdminFilter())
+async def step_requirements(message: Message, state: FSMContext):
+    requirements_text = "" if message.text == "/skip" else message.text.strip()
+    await state.update_data(requirements_text=requirements_text)
     await state.set_state(AddProductStates.category)
     await message.answer(
-        "Step 6/6: Send the <b>category</b> (e.g. OTT, Software, Gaming).\n"
+        "Step 7/7: Send the <b>category</b> (e.g. OTT, Software, Gaming).\n"
         "Or send /skip for 'General':"
     )
 
@@ -300,6 +317,7 @@ async def _save_product(message: Message, state: FSMContext):
         emoji=data.get("emoji", "🛍"),
         tagline=data.get("tagline", ""),
         description=data.get("description", ""),
+        requirements_text=data.get("requirements_text") or None,
         image_file_id=data.get("image_file_id"),
         category=data.get("category", "General"),
         created_by=message.from_user.id,

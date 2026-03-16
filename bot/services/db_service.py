@@ -181,6 +181,7 @@ async def create_product(
     emoji: str,
     tagline: str,
     description: str,
+    requirements_text: Optional[str],
     image_file_id: Optional[str],
     category: str,
     created_by: int,
@@ -188,6 +189,7 @@ async def create_product(
     async with get_session() as session:
         product = Product(
             name=name, emoji=emoji, tagline=tagline, description=description,
+            requirements_text=requirements_text,
             image_file_id=image_file_id, category=category, created_by=created_by,
         )
         session.add(product)
@@ -255,6 +257,7 @@ async def create_order(user_id: int, plan_id: int, upi_id: str) -> Order:
 
     timeout = await get_setting("payment_timeout_minutes") or settings.ORDER_EXPIRY_MINUTES
 
+    requirements_text = (plan.product.requirements_text or "").strip()
     async with get_session() as session:
         order = Order(
             order_id     = generate_order_id(),
@@ -264,6 +267,8 @@ async def create_order(user_id: int, plan_id: int, upi_id: str) -> Order:
             plan_name    = plan.name,
             amount       = plan.price,
             upi_id       = upi_id,
+            requirements_text_snapshot=requirements_text or None,
+            requirements_received=not bool(requirements_text),
             expires_at   = datetime.now(timezone.utc) + timedelta(minutes=int(timeout)),
         )
         session.add(order)
@@ -306,6 +311,31 @@ async def get_orders_by_status(
             select(Order)
             .options(selectinload(Order.user))
             .where(Order.status == status)
+            .order_by(Order.created_at.asc())
+            .offset(page * limit)
+            .limit(limit)
+        )
+        return list(result.scalars().all()), total
+
+
+async def get_delivery_ready_orders(page: int = 0) -> Tuple[List[Order], int]:
+    limit = settings.ORDERS_PER_PAGE
+    async with get_session() as session:
+        total_result = await session.execute(
+            select(func.count(Order.id)).where(
+                Order.status == OrderStatus.paid,
+                Order.requirements_received == True,
+            )
+        )
+        total = total_result.scalar_one()
+
+        result = await session.execute(
+            select(Order)
+            .options(selectinload(Order.user), selectinload(Order.plan))
+            .where(
+                Order.status == OrderStatus.paid,
+                Order.requirements_received == True,
+            )
             .order_by(Order.created_at.asc())
             .offset(page * limit)
             .limit(limit)
@@ -401,6 +431,40 @@ async def mark_delivered(order_id: str, admin_id: int) -> bool:
         )
         await session.commit()
     return True
+
+
+async def save_customer_requirements(order_id: str, response: str) -> bool:
+    return await update_order_status(
+        order_id,
+        OrderStatus.paid,
+        customer_requirements_response=response,
+        requirements_received=True,
+    )
+
+
+async def set_order_channel_message_id(order_id: str, message_id: int | None) -> bool:
+    async with get_session() as session:
+        await session.execute(
+            update(Order).where(Order.order_id == order_id).values(channel_message_id=message_id)
+        )
+        await session.commit()
+        return True
+
+
+async def get_pending_requirements_order_for_user(user_id: int) -> Optional[Order]:
+    async with get_session() as session:
+        result = await session.execute(
+            select(Order)
+            .options(selectinload(Order.user), selectinload(Order.plan))
+            .where(
+                Order.user_id == user_id,
+                Order.status == OrderStatus.paid,
+                Order.requirements_received == False,
+            )
+            .order_by(Order.paid_at.desc(), Order.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
 
 async def expire_old_orders() -> List[Order]:

@@ -4,7 +4,7 @@ Payment admin: approve or reject payment screenshots.
 """
 
 import logging
-from aiogram import Bot, F, Router
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -13,6 +13,7 @@ from keyboards.keyboards import (
     ApprovePaymentCD, RejectPaymentCD, ViewPaymentCD
 )
 from middlewares.role_filter import PaymentAdminFilter
+from services.order_feed_service import sync_order_feed
 from services.db_service import (
     approve_payment, get_order, get_orders_by_status,
     log_action, reject_payment,
@@ -100,7 +101,12 @@ async def cb_view_payment(callback: CallbackQuery, callback_data: ViewPaymentCD,
 # ── Approve ───────────────────────────────────────────────────────────────────
 
 @router.callback_query(ApprovePaymentCD.filter(), PaymentAdminFilter())
-async def cb_approve_payment(callback: CallbackQuery, callback_data: ApprovePaymentCD, bot: Bot):
+async def cb_approve_payment(
+    callback: CallbackQuery,
+    callback_data: ApprovePaymentCD,
+    bot: Bot,
+    dispatcher: Dispatcher | None = None,
+):
     try:
         order_id = callback_data.order_id
         order = await get_order(order_id)
@@ -125,18 +131,9 @@ async def cb_approve_payment(callback: CallbackQuery, callback_data: ApprovePaym
         reply_markup=None,
     )
 
-    # Notify user
-    try:
-        await bot.send_message(
-            chat_id=order.user_id,
-            text=(
-                f"✅ <b>Payment Approved!</b>\n\n"
-                f"Order <b>#{order_id}</b> has been verified.\n"
-                f"Your product will be delivered shortly. 📦"
-            ),
-        )
-    except Exception as e:
-        logger.warning(f"Could not notify user {order.user_id}: {e}")
+    from handlers.user.payment import _handle_post_payment_confirmation
+
+    await _handle_post_payment_confirmation(bot, order_id, dispatcher)
 
     await _notify_payment_admins_status(
         bot=bot,
@@ -145,9 +142,6 @@ async def cb_approve_payment(callback: CallbackQuery, callback_data: ApprovePaym
         actor_label=callback.from_user.username or callback.from_user.full_name,
         approved=True,
     )
-
-    # Notify order admins
-    await _notify_order_admins(bot, order)
 
     await callback.answer("✅ Payment approved!", show_alert=True)
 
@@ -165,6 +159,8 @@ async def _notify_order_admins(bot: Bot, order):
         f"📋 Plan:    {order.plan_name}\n"
         f"💰 Amount:  ₹{order.amount:.0f}"
     )
+    if order.customer_requirements_response:
+        text += f"\n\n📝 <b>User Details:</b>\n{order.customer_requirements_response}"
     kb = confirm_deliver_kb(order.order_id)
     for admin in admins:
         try:
@@ -242,6 +238,7 @@ async def handle_reject_reason(message: Message, state: FSMContext, bot: Bot):
         await message.answer("⚠️ Something went wrong. Please try again or contact support.")
         return
     await state.clear()
+    await sync_order_feed(bot, order_id)
 
     await message.answer(
         f"❌ Order #{order_id} rejected.\nReason: {reason}",

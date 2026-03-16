@@ -1,6 +1,6 @@
 """
 handlers/admin/settings.py
-Owner/super-admin settings: UPI, timeout, maintenance, gateway, XWallet key.
+Owner/super-admin settings: UPI, timeout, maintenance, gateway, XWallet key, order feed.
 """
 
 from aiogram import F, Router
@@ -24,6 +24,11 @@ def _mask_api_key(value: str) -> str:
     return f"{value[:4]}...{value[-4:]}"
 
 
+def _format_channel_id(value: str | None) -> str:
+    value = (value or "").strip()
+    return value if value else "Not set"
+
+
 @router.callback_query(F.data == "admin:settings", OwnerOrSuperFilter())
 async def cb_settings(callback: CallbackQuery):
     s = await get_settings()
@@ -38,9 +43,10 @@ async def cb_settings(callback: CallbackQuery):
     builder.button(text="Welcome Message", callback_data=SettingCD(key="welcome_message").pack())
     builder.button(text="Switch Gateway", callback_data=SettingCD(key="payment_gateway_toggle").pack())
     builder.button(text="Set XWallet API Key", callback_data=SettingCD(key="xwallet_api_key").pack())
+    builder.button(text="Set Order Feed Channel", callback_data=SettingCD(key="order_feed_chat_id").pack())
     builder.button(text="Maintenance Mode", callback_data=SettingCD(key="maintenance_toggle").pack())
     builder.button(text="Admin Panel", callback_data="admin:panel")
-    builder.adjust(2, 2, 2, 1, 1)
+    builder.adjust(2, 2, 2, 1, 1, 1)
 
     text = (
         "<b>Bot Settings</b>\n\n"
@@ -49,6 +55,7 @@ async def cb_settings(callback: CallbackQuery):
         f"Timeout: {s.payment_timeout_minutes} min\n"
         f"Gateway: <b>{gateway}</b>\n"
         f"XWallet Key: <code>{_mask_api_key(s.xwallet_api_key)}</code>\n"
+        f"Order Feed Channel: <code>{_format_channel_id(s.order_feed_chat_id)}</code>\n"
         f"Maintenance: {'ON' if s.maintenance_mode else 'OFF'}"
     )
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
@@ -83,6 +90,10 @@ async def cb_change_setting(callback: CallbackQuery, callback_data: SettingCD, s
         "payment_timeout_minutes": "Send new <b>timeout in minutes</b> (e.g. 10):",
         "welcome_message": "Send new <b>welcome message</b>:",
         "xwallet_api_key": "Send new <b>XWallet API Key</b>:",
+        "order_feed_chat_id": (
+            "Send new <b>Order Feed Channel ID</b> (e.g. <code>-1001234567890</code>).\n"
+            "Send <code>/clear</code> to disable the central order feed."
+        ),
     }
     prompt = prompts.get(key, "Send new value:")
     await state.set_state(SettingsStates.setting_upi)
@@ -110,6 +121,16 @@ async def handle_setting_value(message: Message, state: FSMContext):
     if key == "xwallet_api_key" and not value:
         await message.answer("API key cannot be empty.")
         return
+
+    if key == "order_feed_chat_id":
+        if value.lower() == "/clear":
+            value = ""
+        else:
+            try:
+                int(value)
+            except ValueError:
+                await message.answer("Please send a valid numeric Telegram channel ID or /clear.")
+                return
 
     await update_setting(key, value)
     await state.clear()

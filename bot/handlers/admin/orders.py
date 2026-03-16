@@ -23,10 +23,11 @@ from keyboards.keyboards import (
     back_to_admin_kb,
 )
 from middlewares.role_filter import OrderAdminFilter, OwnerOrSuperFilter
+from services.order_feed_service import sync_order_feed
 from services.db_service import (
+    get_delivery_ready_orders,
     get_all_orders_page,
     get_order,
-    get_orders_by_status,
     log_action,
     mark_delivered,
 )
@@ -85,7 +86,7 @@ async def cb_orders_page(callback: CallbackQuery, callback_data: AdminOrdersPage
 
 
 async def _show_orders_page(callback: CallbackQuery, page: int):
-    orders, total = await get_orders_by_status(OrderStatus.paid, page)
+    orders, total = await get_delivery_ready_orders(page)
     if not orders and page == 0:
         await callback.message.edit_text(
             "<b>Pending Deliveries</b>\n\nNo orders to deliver.",
@@ -112,12 +113,18 @@ async def cb_do_deliver(callback: CallbackQuery, callback_data: AdminDeliverCD |
 
     await state.set_state(DeliverOrderStates.waiting_product)
     await state.update_data(order_id=order_id, user_id=order.user_id)
-    await callback.message.answer(
+    text = (
         f"<b>Deliver Order #{order_id}</b>\n\n"
         f"Product: {order.product_name}\n"
         f"Plan: {order.plan_name}\n\n"
-        "Send the product now (text/file/link).",
     )
+    if order.customer_requirements_response:
+        text += (
+            "<b>User Details:</b>\n"
+            f"{order.customer_requirements_response}\n\n"
+        )
+    text += "Send the product now (text/file/link)."
+    await callback.message.answer(text)
     await callback.answer()
 
 
@@ -151,6 +158,7 @@ async def handle_deliver_product(message: Message, state: FSMContext, bot: Bot):
     if delivered:
         await mark_delivered(order_id, message.from_user.id)
         await log_action(message.from_user.id, "deliver_order", order_id)
+        await sync_order_feed(bot, order_id)
         await message.answer(
             f"<b>Delivered</b>\n\nOrder #{order_id} delivered to user.",
             reply_markup=back_to_admin_kb(),
@@ -215,6 +223,16 @@ async def cb_all_order_info(callback: CallbackQuery, callback_data: AdminOrderIn
         f"Paid: {paid_at}\n"
         f"Delivered: {delivered_at}"
     )
+    if order.requirements_text_snapshot:
+        text += (
+            f"\n\n<b>Required Info Prompt:</b>\n"
+            f"{order.requirements_text_snapshot}"
+        )
+    if order.customer_requirements_response:
+        text += (
+            f"\n\n<b>User Submitted Details:</b>\n"
+            f"{order.customer_requirements_response}"
+        )
 
     builder = InlineKeyboardBuilder()
     builder.button(

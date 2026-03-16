@@ -6,8 +6,10 @@ Order creation -> UPI/XWallet payment flow -> admin notification.
 import asyncio
 import logging
 
-from aiogram import Bot, F, Router
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.filters import BaseFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from config.settings import settings
@@ -17,10 +19,12 @@ from keyboards.keyboards import (
 )
 from services.db_service import (
     approve_payment, count_pending_orders, create_order, get_order,
-    get_admins_by_role, get_settings, submit_screenshot, update_order_status,
+    get_admins_by_role, get_pending_requirements_order_for_user, get_settings,
+    save_customer_requirements, submit_screenshot, update_order_status,
     log_action,
 )
 from database.models import AdminRole, BotSettings, Order, OrderStatus
+from services.order_feed_service import sync_order_feed
 from services.xwallet_service import create_payment, wait_for_payment
 from states.states import PaymentStates
 from utils.qr_generator import generate_upi_qr
@@ -29,8 +33,123 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+class PendingRequirementsFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        pending_order = await get_pending_requirements_order_for_user(message.from_user.id)
+        return pending_order is not None
+
+
+def _order_needs_requirements(order: Order) -> bool:
+    return bool((order.requirements_text_snapshot or "").strip()) and not bool(order.requirements_received)
+
+
+async def _set_requirements_state(dispatcher: Dispatcher | None, bot: Bot, user_id: int, order_id: str) -> None:
+    if dispatcher is None:
+        logger.warning(f"Dispatcher unavailable while setting requirements state for order {order_id}")
+        return
+
+    try:
+        state = FSMContext(
+            storage=dispatcher.storage,
+            key=StorageKey(bot_id=bot.id, chat_id=user_id, user_id=user_id),
+        )
+        await state.set_state(PaymentStates.waiting_requirements)
+        await state.update_data(requirements_order_id=order_id)
+    except Exception as e:
+        logger.warning(f"Could not set requirements state for order {order_id}: {e}")
+
+
+async def _handle_post_payment_confirmation(
+    bot: Bot,
+    order_id: str,
+    dispatcher: Dispatcher | None = None,
+) -> None:
+    latest_order = await get_order(order_id)
+    if not latest_order:
+        return
+
+    await bot.send_message(
+        chat_id=latest_order.user_id,
+        text=(
+            "✅ <b>Payment Confirmed!</b>\n\n"
+            f"Order <b>#{latest_order.order_id}</b> confirmed."
+        ),
+    )
+
+    if _order_needs_requirements(latest_order):
+        await _set_requirements_state(dispatcher, bot, latest_order.user_id, latest_order.order_id)
+        await bot.send_message(
+            chat_id=latest_order.user_id,
+            text=(
+                "📝 <b>Required Information Needed</b>\n\n"
+                "Aapka payment confirm ho gaya hai. Order process karne ke liye yeh details bhejna zaroori hai:\n\n"
+                f"{latest_order.requirements_text_snapshot}\n\n"
+                "Please ab isi chat me required information ek message me bhej dein."
+            ),
+        )
+        await sync_order_feed(bot, latest_order.order_id)
+        return
+
+    from handlers.admin.payments import _notify_order_admins
+
+    await bot.send_message(
+        chat_id=latest_order.user_id,
+        text="Aapka product jald deliver hoga. 📦",
+    )
+    await sync_order_feed(bot, latest_order.order_id)
+    await _notify_order_admins(bot, latest_order)
+
+
+async def _process_requirements_response(message: Message, state: FSMContext, bot: Bot) -> None:
+    data = await state.get_data()
+    order_id = data.get("requirements_order_id")
+
+    if not order_id:
+        pending_order = await get_pending_requirements_order_for_user(message.from_user.id)
+        order_id = pending_order.order_id if pending_order else None
+
+    if not order_id:
+        await state.clear()
+        return
+
+    response = message.text.strip()
+    if not response:
+        await message.answer("Please send the required details in text format.")
+        return
+
+    order = await get_order(order_id)
+    if not order or order.status != OrderStatus.paid:
+        await state.clear()
+        await message.answer("This order is no longer waiting for details.", reply_markup=main_menu_kb())
+        return
+
+    await save_customer_requirements(order_id, response)
+    await state.clear()
+    await log_action(message.from_user.id, "submit_order_requirements", order_id)
+
+    await message.answer(
+        "✅ <b>Details Received!</b>\n\n"
+        f"Order <b>#{order_id}</b> ke required details mil gaye hain.\n"
+        "Ab admin aapka order process karega. 📦",
+        reply_markup=main_menu_kb(),
+    )
+
+    latest_order = await get_order(order_id)
+    if latest_order:
+        from handlers.admin.payments import _notify_order_admins
+
+        await sync_order_feed(bot, order_id)
+        await _notify_order_admins(bot, latest_order)
+
+
 @router.callback_query(OrderConfirmCD.filter())
-async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmCD, state: FSMContext, bot: Bot) -> None:
+async def cb_confirm_order(
+    callback: CallbackQuery,
+    callback_data: OrderConfirmCD,
+    state: FSMContext,
+    bot: Bot,
+    dispatcher: Dispatcher | None = None,
+) -> None:
     plan_id = callback_data.plan_id
     user_id = callback.from_user.id
 
@@ -47,6 +166,7 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
         bot_settings = await get_settings()
         upi_id = bot_settings.upi_id
         order = await create_order(user_id=user_id, plan_id=plan_id, upi_id=upi_id)
+        await sync_order_feed(bot, order.order_id)
     except ValueError as e:
         await callback.answer(str(e), show_alert=True)
         return
@@ -57,7 +177,7 @@ async def cb_confirm_order(callback: CallbackQuery, callback_data: OrderConfirmC
 
     gateway = (getattr(bot_settings, "payment_gateway", settings.PAYMENT_GATEWAY) or "manual").lower()
     if gateway == "xwallet":
-        await _handle_xwallet_payment(callback, bot, order)
+        await _handle_xwallet_payment(callback, bot, dispatcher, order)
     else:
         await _handle_manual_payment(callback, bot, order, bot_settings)
     try:
@@ -101,7 +221,12 @@ async def _handle_manual_payment(callback: CallbackQuery, bot: Bot, order: Order
     await callback.answer()
 
 
-async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Order) -> None:
+async def _handle_xwallet_payment(
+    callback: CallbackQuery,
+    bot: Bot,
+    dispatcher: Dispatcher,
+    order: Order,
+) -> None:
     """XWallet flow: create payment, send payment-link CTA, and start polling."""
     loading = await callback.message.answer("⏳ Payment link generate ho raha hai...")
 
@@ -170,6 +295,7 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
     asyncio.create_task(
         _poll_and_complete(
             bot,
+            dispatcher,
             order,
             qr_code_id,
             payment_message_id=payment_message.message_id,
@@ -180,6 +306,7 @@ async def _handle_xwallet_payment(callback: CallbackQuery, bot: Bot, order: Orde
 
 async def _poll_and_complete(
     bot: Bot,
+    dispatcher: Dispatcher | None,
     order: Order,
     qr_code_id: str,
     payment_message_id: int | None = None,
@@ -199,16 +326,7 @@ async def _poll_and_complete(
 
         if success:
             await approve_payment(order.order_id, admin_id=0)
-            await bot.send_message(
-                chat_id=order.user_id,
-                text=(
-                    "✅ <b>Payment Received!</b>\n\n"
-                    f"Order <b>#{order.order_id}</b> confirmed.\n"
-                    "Aapka product jald deliver hoga. 📦"
-                ),
-            )
-            from handlers.admin.payments import _notify_order_admins
-            await _notify_order_admins(bot, latest_order)
+            await _handle_post_payment_confirmation(bot, order.order_id, dispatcher)
             return
 
         await update_order_status(order.order_id, OrderStatus.expired)
@@ -220,6 +338,7 @@ async def _poll_and_complete(
                 "Please naya order create karein."
             ),
         )
+        await sync_order_feed(bot, order.order_id)
     except Exception as e:
         logger.error(f"Error while polling XWallet payment for order {order.order_id}: {e}")
 
@@ -288,6 +407,7 @@ async def handle_screenshot(message: Message, state: FSMContext, bot: Bot) -> No
         f"You'll be notified once verified. Thank you! 🙏",
         reply_markup=main_menu_kb(),
     )
+    await sync_order_feed(bot, order_id)
 
     # Notify payment admins
     await _notify_payment_admins(bot, order, file_id)
@@ -326,6 +446,16 @@ async def _notify_payment_admins(bot: Bot, order: Order, file_id: str) -> None:
             logger.warning(f"Could not notify admin {admin.id}: {e}")
 
 
+@router.message(PaymentStates.waiting_requirements, F.text)
+async def handle_requirements_response(message: Message, state: FSMContext, bot: Bot) -> None:
+    await _process_requirements_response(message, state, bot)
+
+
+@router.message(PendingRequirementsFilter(), F.text)
+async def handle_requirements_response_fallback(message: Message, state: FSMContext, bot: Bot) -> None:
+    await _process_requirements_response(message, state, bot)
+
+
 @router.callback_query(CancelOrderCD.filter())
 async def cb_cancel_order(callback: CallbackQuery, callback_data: CancelOrderCD, state: FSMContext) -> None:
     try:
@@ -334,6 +464,7 @@ async def cb_cancel_order(callback: CallbackQuery, callback_data: CancelOrderCD,
 
         if order and order.status in (OrderStatus.pending, OrderStatus.submitted):
             await update_order_status(order_id, OrderStatus.cancelled)
+            await sync_order_feed(callback.bot, order_id)
     except Exception as e:
         logger.error(f"Error cancelling order: {e}")
         await callback.answer("⚠️ Something went wrong. Please try again or contact support.", show_alert=True)
@@ -361,4 +492,18 @@ async def handle_non_photo(message: Message, state: FSMContext) -> None:
     await message.answer(
         "⚠️ Please send a <b>photo/screenshot</b> of your payment.",
         reply_markup=cancel_screenshot_kb(order_id),
+    )
+
+
+@router.message(PaymentStates.waiting_requirements)
+async def handle_non_text_requirements(message: Message) -> None:
+    await message.answer(
+        "⚠️ Please send the required order details in <b>text format</b>."
+    )
+
+
+@router.message(PendingRequirementsFilter())
+async def handle_pending_requirements_non_text_fallback(message: Message) -> None:
+    await message.answer(
+        "⚠️ Please send the required order details in <b>text format</b>."
     )
