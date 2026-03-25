@@ -6,7 +6,7 @@ All database operations in one place — keeps handlers clean.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 from sqlalchemy import func, select, update
@@ -24,6 +24,11 @@ from utils.order_id import generate_order_id
 logger = logging.getLogger(__name__)
 
 
+def _utc_now_naive() -> datetime:
+    """Return UTC as a naive datetime for DB columns declared without timezone."""
+    return datetime.utcnow()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # USER SERVICE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -35,7 +40,7 @@ async def upsert_user(user_id: int, username: Optional[str], full_name: str) -> 
         if user:
             user.username    = username
             user.full_name   = full_name
-            user.last_active = datetime.now(timezone.utc)
+            user.last_active = _utc_now_naive()
         else:
             user = User(id=user_id, username=username, full_name=full_name)
             session.add(user)
@@ -269,7 +274,7 @@ async def create_order(user_id: int, plan_id: int, upi_id: str) -> Order:
             upi_id       = upi_id,
             requirements_text_snapshot=requirements_text or None,
             requirements_received=not bool(requirements_text),
-            expires_at   = datetime.now(timezone.utc) + timedelta(minutes=int(timeout)),
+            expires_at   = _utc_now_naive() + timedelta(minutes=int(timeout)),
         )
         session.add(order)
         await session.commit()
@@ -384,7 +389,7 @@ async def approve_payment(order_id: str, admin_id: int) -> bool:
     return await update_order_status(
         order_id, OrderStatus.paid,
         verified_by=admin_id,
-        paid_at=datetime.now(timezone.utc),
+        paid_at=_utc_now_naive(),
     )
 
 
@@ -405,7 +410,7 @@ async def mark_delivered(order_id: str, admin_id: int) -> bool:
         order_id,
         OrderStatus.delivered,
         delivered_by=admin_id,
-        delivered_at=datetime.now(timezone.utc),
+        delivered_at=_utc_now_naive(),
     )
     if not result:
         return False
@@ -469,7 +474,7 @@ async def get_pending_requirements_order_for_user(user_id: int) -> Optional[Orde
 
 async def expire_old_orders() -> List[Order]:
     """Called by scheduler — expire pending orders past their deadline."""
-    now = datetime.now(timezone.utc)
+    now = _utc_now_naive()
     async with get_session() as session:
         result = await session.execute(
             select(Order)
