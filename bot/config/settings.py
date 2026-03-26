@@ -3,41 +3,32 @@ config/settings.py
 All configuration loaded from environment variables via pydantic-settings.
 """
 
-from pydantic_settings import BaseSettings
 from pydantic import field_validator
-from typing import List
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ── Bot ───────────────────────────────────────────────────────────────────
     BOT_TOKEN: str
     OWNER_ID: int
 
-    # ── Database ──────────────────────────────────────────────────────────────
-    DATABASE_URL: str = "sqlite+aiosqlite:///./shopbot.db"
-    # For PostgreSQL:
-    # DATABASE_URL: str = "postgresql+asyncpg://user:pass@localhost/shopbot"
+    MONGODB_URL: str = "mongodb://localhost:27017"
+    MONGODB_DB_NAME: str = "telegram_selling_bot"
 
-    # ── Store ─────────────────────────────────────────────────────────────────
     UPI_ID: str = "store@upi"
     UPI_NAME: str = "My Store"
-    STORE_NAME: str = "🛍 My Store"
+    STORE_NAME: str = "My Store"
     SUPPORT_USERNAME: str = "@support"
     XWALLET_API_KEY: str = ""
     XWALLET_BASE_URL: str = "https://xwalletbot.shop/wallet/getway"
-    PAYMENT_GATEWAY: str = "manual"  # "manual" or "xwallet"
+    PAYMENT_GATEWAY: str = "manual"
 
-    # ── Order Settings ────────────────────────────────────────────────────────
     ORDER_EXPIRY_MINUTES: int = 10
-    MAX_PENDING_ORDERS: int = 3        # Max simultaneous pending orders per user
+    MAX_PENDING_ORDERS: int = 3
 
-    # ── Pagination ────────────────────────────────────────────────────────────
     PRODUCTS_PER_PAGE: int = 5
     ORDERS_PER_PAGE: int = 8
 
-    # ── Broadcast ─────────────────────────────────────────────────────────────
-    BROADCAST_DELAY: float = 0.05     # Seconds between messages (avoid flood)
-
+    BROADCAST_DELAY: float = 0.05
     LOG_LEVEL: str = "INFO"
 
     @field_validator("BOT_TOKEN")
@@ -64,21 +55,21 @@ class Settings(BaseSettings):
             raise ValueError("MAX_PENDING_ORDERS must be between 1 and 10")
         return v
 
-    @field_validator("DATABASE_URL")
-    def validate_db_url(cls, v: str) -> str:
-        if v.startswith("postgres://"):
-            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
-        if not (v.startswith("sqlite") or v.startswith("postgresql")):
-            raise ValueError("DATABASE_URL must start with 'sqlite' or 'postgresql'")
+    @field_validator("MONGODB_URL")
+    def validate_mongodb_url(cls, v: str) -> str:
+        if not (v.startswith("mongodb://") or v.startswith("mongodb+srv://")):
+            raise ValueError("MONGODB_URL must start with 'mongodb://' or 'mongodb+srv://'")
         return v
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
 
+
 try:
     settings = Settings()
 except Exception as e:
     print(f"Environment Validation Error: {e}")
     import sys
+
     sys.exit(1)

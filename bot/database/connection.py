@@ -1,228 +1,95 @@
 """
 database/connection.py
-Async SQLAlchemy engine + session factory.
-Works with SQLite (dev) and PostgreSQL (prod) - just change DATABASE_URL.
+MongoDB client bootstrap and index management.
 """
 
-import logging
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from __future__ import annotations
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+import logging
+
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo import ASCENDING, DESCENDING
 
 from config.settings import settings
-from database.models import Base
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {},
-)
+_client: AsyncIOMotorClient | None = None
+_db: AsyncIOMotorDatabase | None = None
 
-AsyncSessionFactory = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-)
+
+def get_db() -> AsyncIOMotorDatabase:
+    if _db is None:
+        raise RuntimeError("Database has not been initialized")
+    return _db
 
 
 async def init_db() -> None:
-    """Create all tables and run lightweight compatibility fixes on startup."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await _ensure_bot_settings_columns(conn)
-        await _ensure_product_columns(conn)
-        await _ensure_order_columns(conn)
+    global _client, _db
+    if _client is not None and _db is not None:
+        return
 
-    await _seed_defaults()
-    logger.info("Database initialized")
+    _client = AsyncIOMotorClient(settings.MONGODB_URL)
+    _db = _client[settings.MONGODB_DB_NAME]
+    await _db.command("ping")
+
+    await _ensure_indexes(_db)
+    await _seed_defaults(_db)
+    logger.info("MongoDB initialized")
 
 
 async def close_db() -> None:
-    await engine.dispose()
-    logger.info("Database connection closed")
+    global _client, _db
+    if _client is not None:
+        _client.close()
+    _client = None
+    _db = None
+    logger.info("MongoDB connection closed")
 
 
-async def _seed_defaults() -> None:
-    """Insert owner admin and default BotSettings if they don't exist."""
-    from sqlalchemy import select
-
-    from database.models import Admin, AdminRole, BotSettings
-
-    async with AsyncSessionFactory() as session:
-        result = await session.execute(select(BotSettings).where(BotSettings.id == 1))
-        current = result.scalar_one_or_none()
-        if not current:
-            session.add(
-                BotSettings(
-                    id=1,
-                    upi_id=settings.UPI_ID,
-                    upi_name=settings.UPI_NAME,
-                    payment_gateway=settings.PAYMENT_GATEWAY,
-                    xwallet_api_key=settings.XWALLET_API_KEY,
-                    total_earnings=0.0,
-                )
-            )
-        else:
-            if not current.payment_gateway:
-                current.payment_gateway = settings.PAYMENT_GATEWAY
-            if not current.xwallet_api_key:
-                current.xwallet_api_key = settings.XWALLET_API_KEY
-            if current.total_earnings is None:
-                current.total_earnings = 0.0
-
-        result = await session.execute(select(Admin).where(Admin.id == settings.OWNER_ID))
-        if not result.scalar_one_or_none():
-            session.add(
-                Admin(
-                    id=settings.OWNER_ID,
-                    username="owner",
-                    role=AdminRole.owner,
-                    added_by=None,
-                )
-            )
-
-        await session.commit()
+async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
+    await db.users.create_index([("last_active", DESCENDING)])
+    await db.admins.create_index([("is_active", ASCENDING), ("role", ASCENDING)])
+    await db.products.create_index([("is_active", ASCENDING), ("sort_order", ASCENDING), ("_id", ASCENDING)])
+    await db.plans.create_index([("product_id", ASCENDING), ("is_active", ASCENDING), ("sort_order", ASCENDING), ("_id", ASCENDING)])
+    await db.orders.create_index("order_id", unique=True)
+    await db.orders.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+    await db.orders.create_index([("status", ASCENDING), ("created_at", ASCENDING)])
+    await db.orders.create_index([("status", ASCENDING), ("expires_at", ASCENDING)])
+    await db.audit_logs.create_index([("admin_id", ASCENDING), ("created_at", DESCENDING)])
 
 
-async def _ensure_bot_settings_columns(conn) -> None:
-    """Add new BotSettings columns for older deployments without migrations."""
-    if "sqlite" in settings.DATABASE_URL:
-        result = await conn.execute(text("PRAGMA table_info(bot_settings)"))
-        columns = {row[1] for row in result.fetchall()}
-        if "payment_gateway" not in columns:
-            await conn.execute(
-                text("ALTER TABLE bot_settings ADD COLUMN payment_gateway VARCHAR(16) DEFAULT 'manual'")
-            )
-        if "xwallet_api_key" not in columns:
-            await conn.execute(
-                text("ALTER TABLE bot_settings ADD COLUMN xwallet_api_key VARCHAR(255) DEFAULT ''")
-            )
-        if "order_feed_chat_id" not in columns:
-            await conn.execute(
-                text("ALTER TABLE bot_settings ADD COLUMN order_feed_chat_id VARCHAR(64)")
-            )
-        if "total_earnings" not in columns:
-            await conn.execute(
-                text("ALTER TABLE bot_settings ADD COLUMN total_earnings FLOAT DEFAULT 0")
-            )
-        return
-
-    await conn.execute(
-        text(
-            "ALTER TABLE bot_settings "
-            "ADD COLUMN IF NOT EXISTS payment_gateway VARCHAR(16) DEFAULT 'manual'"
-        )
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE bot_settings "
-            "ADD COLUMN IF NOT EXISTS xwallet_api_key VARCHAR(255) DEFAULT ''"
-        )
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE bot_settings "
-            "ADD COLUMN IF NOT EXISTS order_feed_chat_id VARCHAR(64)"
-        )
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE bot_settings "
-            "ADD COLUMN IF NOT EXISTS total_earnings FLOAT DEFAULT 0"
-        )
+async def _seed_defaults(db: AsyncIOMotorDatabase) -> None:
+    await db.bot_settings.update_one(
+        {"_id": 1},
+        {
+            "$setOnInsert": {
+                "upi_id": settings.UPI_ID,
+                "upi_name": settings.UPI_NAME,
+                "payment_timeout_minutes": settings.ORDER_EXPIRY_MINUTES,
+                "payment_gateway": settings.PAYMENT_GATEWAY,
+                "xwallet_api_key": settings.XWALLET_API_KEY,
+                "order_feed_chat_id": None,
+                "total_earnings": 0.0,
+                "welcome_message": "Welcome! Browse our products below.",
+                "maintenance_mode": False,
+            }
+        },
+        upsert=True,
     )
 
-
-async def _ensure_product_columns(conn) -> None:
-    """Add new Product columns for older deployments without migrations."""
-    if "sqlite" in settings.DATABASE_URL:
-        result = await conn.execute(text("PRAGMA table_info(products)"))
-        columns = {row[1] for row in result.fetchall()}
-        if "emoji" not in columns:
-            await conn.execute(
-                text("ALTER TABLE products ADD COLUMN emoji VARCHAR(16) DEFAULT '🛍' NOT NULL")
-            )
-        if "requirements_text" not in columns:
-            await conn.execute(
-                text("ALTER TABLE products ADD COLUMN requirements_text TEXT")
-            )
-        return
-
-    await conn.execute(
-        text(
-            "ALTER TABLE products "
-            "ADD COLUMN IF NOT EXISTS emoji VARCHAR(16) DEFAULT '🛍'"
-        )
+    await db.admins.update_one(
+        {"_id": settings.OWNER_ID},
+        {
+            "$set": {
+                "username": "owner",
+                "role": "owner",
+                "is_active": True,
+                "added_by": None,
+            },
+            "$setOnInsert": {
+                "added_at": None,
+            },
+        },
+        upsert=True,
     )
-    await conn.execute(
-        text(
-            "ALTER TABLE products "
-            "ADD COLUMN IF NOT EXISTS requirements_text TEXT"
-        )
-    )
-
-
-async def _ensure_order_columns(conn) -> None:
-    """Add new Order columns for older deployments without migrations."""
-    if "sqlite" in settings.DATABASE_URL:
-        result = await conn.execute(text("PRAGMA table_info(orders)"))
-        columns = {row[1] for row in result.fetchall()}
-        if "requirements_text_snapshot" not in columns:
-            await conn.execute(
-                text("ALTER TABLE orders ADD COLUMN requirements_text_snapshot TEXT")
-            )
-        if "customer_requirements_response" not in columns:
-            await conn.execute(
-                text("ALTER TABLE orders ADD COLUMN customer_requirements_response TEXT")
-            )
-        if "requirements_received" not in columns:
-            await conn.execute(
-                text("ALTER TABLE orders ADD COLUMN requirements_received BOOLEAN DEFAULT 1 NOT NULL")
-            )
-        if "channel_message_id" not in columns:
-            await conn.execute(
-                text("ALTER TABLE orders ADD COLUMN channel_message_id BIGINT")
-            )
-        return
-
-    await conn.execute(
-        text(
-            "ALTER TABLE orders "
-            "ADD COLUMN IF NOT EXISTS requirements_text_snapshot TEXT"
-        )
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE orders "
-            "ADD COLUMN IF NOT EXISTS customer_requirements_response TEXT"
-        )
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE orders "
-            "ADD COLUMN IF NOT EXISTS requirements_received BOOLEAN DEFAULT TRUE"
-        )
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE orders "
-            "ADD COLUMN IF NOT EXISTS channel_message_id BIGINT"
-        )
-    )
-
-
-@asynccontextmanager
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionFactory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise

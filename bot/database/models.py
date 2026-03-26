@@ -1,158 +1,137 @@
 """
 database/models.py
-SQLAlchemy async ORM models — supports both SQLite (dev) and PostgreSQL (prod).
+Dataclass-based domain models used by the MongoDB service layer.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 from enum import Enum as PyEnum
-
-from sqlalchemy import (
-    BigInteger, Boolean, Column, DateTime, Enum, Float,
-    ForeignKey, Integer, String, Text, func
-)
-from sqlalchemy.orm import DeclarativeBase, relationship
+from typing import Optional
 
 
-class Base(DeclarativeBase):
-    pass
+class Base:
+    metadata = None
 
-
-# ── Enums ─────────────────────────────────────────────────────────────────────
 
 class AdminRole(str, PyEnum):
-    owner         = "owner"
-    super_admin   = "super_admin"
+    owner = "owner"
+    super_admin = "super_admin"
     product_admin = "product_admin"
     payment_admin = "payment_admin"
-    order_admin   = "order_admin"
+    order_admin = "order_admin"
 
 
 class OrderStatus(str, PyEnum):
-    pending   = "pending"
-    submitted = "submitted"   # Screenshot sent
-    paid      = "paid"        # Payment approved
-    delivered = "delivered"   # Product sent
-    rejected  = "rejected"    # Payment rejected
-    expired   = "expired"     # Timed out
+    pending = "pending"
+    submitted = "submitted"
+    paid = "paid"
+    delivered = "delivered"
+    rejected = "rejected"
+    expired = "expired"
     cancelled = "cancelled"
 
 
-# ── Tables ────────────────────────────────────────────────────────────────────
-
-class User(Base):
-    __tablename__ = "users"
-
-    id            = Column(BigInteger, primary_key=True)   # Telegram user_id
-    username      = Column(String(64), nullable=True)
-    full_name     = Column(String(128), nullable=False)
-    is_banned     = Column(Boolean, default=False)
-    total_orders  = Column(Integer, default=0)
-    total_spent   = Column(Float, default=0.0)
-    created_at    = Column(DateTime, server_default=func.now())
-    last_active   = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    orders        = relationship("Order", back_populates="user", lazy="select")
+@dataclass
+class User:
+    id: int
+    username: Optional[str] = None
+    full_name: str = ""
+    is_banned: bool = False
+    total_orders: int = 0
+    total_spent: float = 0.0
+    created_at: Optional[datetime] = None
+    last_active: Optional[datetime] = None
 
 
-class Admin(Base):
-    __tablename__ = "admins"
-
-    id         = Column(BigInteger, primary_key=True)   # Telegram user_id
-    username   = Column(String(64), nullable=True)
-    role       = Column(Enum(AdminRole), nullable=False)
-    is_active  = Column(Boolean, default=True)
-    added_by   = Column(BigInteger, nullable=True)
-    added_at   = Column(DateTime, server_default=func.now())
-
-
-class Product(Base):
-    __tablename__ = "products"
-
-    id           = Column(Integer, primary_key=True, autoincrement=True)
-    name         = Column(String(128), nullable=False)
-    emoji        = Column(String(16), nullable=False, default="🛍")
-    image_file_id = Column(String(256), nullable=True)   # Telegram file_id
-    tagline      = Column(String(256), nullable=True)
-    description  = Column(Text, nullable=True)
-    requirements_text = Column(Text, nullable=True)
-    category     = Column(String(64), default="General")
-    is_active    = Column(Boolean, default=True)
-    sort_order   = Column(Integer, default=0)
-    total_sales  = Column(Integer, default=0)
-    created_by   = Column(BigInteger, nullable=True)
-    created_at   = Column(DateTime, server_default=func.now())
-    updated_at   = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    plans        = relationship("Plan", back_populates="product",
-                                cascade="all, delete-orphan", lazy="select")
+@dataclass
+class Admin:
+    id: int
+    username: Optional[str] = None
+    role: AdminRole = AdminRole.product_admin
+    is_active: bool = True
+    added_by: Optional[int] = None
+    added_at: Optional[datetime] = None
 
 
-class Plan(Base):
-    __tablename__ = "plans"
-
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
-    name       = Column(String(128), nullable=False)
-    price      = Column(Float, nullable=False)
-    is_active  = Column(Boolean, default=True)
-    sort_order = Column(Integer, default=0)
-
-    product    = relationship("Product", back_populates="plans")
-    orders     = relationship("Order", back_populates="plan", lazy="select")
-
-
-class Order(Base):
-    __tablename__ = "orders"
-
-    id                  = Column(Integer, primary_key=True, autoincrement=True)
-    order_id            = Column(String(16), unique=True, nullable=False)  # e.g. ORD1042
-    user_id             = Column(BigInteger, ForeignKey("users.id"), nullable=False)
-    plan_id             = Column(Integer, ForeignKey("plans.id"), nullable=False)
-    product_name        = Column(String(128), nullable=False)  # Denormalized snapshot
-    plan_name           = Column(String(128), nullable=False)  # Denormalized snapshot
-    amount              = Column(Float, nullable=False)
-    upi_id              = Column(String(128), nullable=False)  # UPI at time of order
-    status              = Column(Enum(OrderStatus), default=OrderStatus.pending)
-    screenshot_file_id  = Column(String(256), nullable=True)
-    requirements_text_snapshot = Column(Text, nullable=True)
-    customer_requirements_response = Column(Text, nullable=True)
-    requirements_received = Column(Boolean, default=True)
-    channel_message_id   = Column(BigInteger, nullable=True)
-    verified_by         = Column(BigInteger, nullable=True)
-    delivered_by        = Column(BigInteger, nullable=True)
-    reject_reason       = Column(String(256), nullable=True)
-    expires_at          = Column(DateTime, nullable=False)
-    paid_at             = Column(DateTime, nullable=True)
-    delivered_at        = Column(DateTime, nullable=True)
-    created_at          = Column(DateTime, server_default=func.now())
-
-    user   = relationship("User", back_populates="orders")
-    plan   = relationship("Plan", back_populates="orders")
+@dataclass
+class Product:
+    id: int
+    name: str
+    emoji: str = "🛍"
+    image_file_id: Optional[str] = None
+    tagline: Optional[str] = None
+    description: Optional[str] = None
+    requirements_text: Optional[str] = None
+    category: str = "General"
+    is_active: bool = True
+    sort_order: int = 0
+    total_sales: int = 0
+    created_by: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    plans: list["Plan"] = field(default_factory=list)
 
 
-class BotSettings(Base):
-    __tablename__ = "bot_settings"
-
-    id                       = Column(Integer, primary_key=True, default=1)
-    upi_id                   = Column(String(128), default="store@upi")
-    upi_name                 = Column(String(128), default="My Store")
-    payment_timeout_minutes  = Column(Integer, default=10)
-    payment_gateway          = Column(String(16), default="manual")
-    xwallet_api_key          = Column(String(255), default="")
-    order_feed_chat_id       = Column(String(64), nullable=True)
-    total_earnings           = Column(Float, default=0.0)
-    welcome_message          = Column(Text, default="Welcome! Browse our products below.")
-    maintenance_mode         = Column(Boolean, default=False)
-    updated_at               = Column(DateTime, server_default=func.now(), onupdate=func.now())
+@dataclass
+class Plan:
+    id: int
+    product_id: int
+    name: str
+    price: float
+    is_active: bool = True
+    sort_order: int = 0
+    product: Optional[Product] = None
 
 
-class AuditLog(Base):
-    __tablename__ = "audit_logs"
+@dataclass
+class Order:
+    id: int
+    order_id: str
+    user_id: int
+    plan_id: int
+    product_name: str
+    plan_name: str
+    amount: float
+    upi_id: str
+    status: OrderStatus = OrderStatus.pending
+    screenshot_file_id: Optional[str] = None
+    requirements_text_snapshot: Optional[str] = None
+    customer_requirements_response: Optional[str] = None
+    requirements_received: bool = True
+    channel_message_id: Optional[int] = None
+    verified_by: Optional[int] = None
+    delivered_by: Optional[int] = None
+    reject_reason: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    user: Optional[User] = None
+    plan: Optional[Plan] = None
 
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    admin_id   = Column(BigInteger, nullable=False)
-    action     = Column(String(64), nullable=False)
-    target_id  = Column(String(64), nullable=True)
-    details    = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+
+@dataclass
+class BotSettings:
+    id: int = 1
+    upi_id: str = "store@upi"
+    upi_name: str = "My Store"
+    payment_timeout_minutes: int = 10
+    payment_gateway: str = "manual"
+    xwallet_api_key: str = ""
+    order_feed_chat_id: Optional[str] = None
+    total_earnings: float = 0.0
+    welcome_message: str = "Welcome! Browse our products below."
+    maintenance_mode: bool = False
+    updated_at: Optional[datetime] = None
+
+
+@dataclass
+class AuditLog:
+    id: int
+    admin_id: int
+    action: str
+    target_id: Optional[str] = None
+    details: Optional[str] = None
+    created_at: Optional[datetime] = None
