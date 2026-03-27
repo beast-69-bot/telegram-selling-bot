@@ -47,7 +47,7 @@ async def cb_browse_products(callback: CallbackQuery, callback_data: BrowseProdu
         await callback.answer("No products available right now.", show_alert=True)
         return
 
-    text = "🛍 <b>Our Products</b>\n\nSelect a product to view details:"
+    text = "📦 <b>Our Products</b>\n\nSelect a product to view details:"
     kb = products_page_kb(products, page, total)
 
     await _edit_or_send(callback, text, kb)
@@ -78,7 +78,7 @@ async def cb_product_detail(callback: CallbackQuery, callback_data: ProductCD, s
             plans_text += f"  • {plan.name} — <b>₹{plan.price:.0f}</b>\n"
 
     text = (
-        f"<b>{product.emoji or '🛍'} {product.name}</b>\n"
+        f"<b>{product.emoji or '📦'} {product.name}</b>\n"
         f"<i>{product.tagline or ''}</i>\n\n"
         f"{product.description or ''}\n\n"
         f"<b>📋 Available Plans:</b>\n{plans_text}"
@@ -210,7 +210,7 @@ async def handle_search_query(message: Message, state: FSMContext):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     for p in products[:10]: # Limit to 10 results
-        kb.button(text=f"🟢 {p.emoji or '🛍'} {p.name}", callback_data=ProductCD(id=p.id).pack())
+        kb.button(text=f"✅ {p.emoji or '📦'} {p.name}", callback_data=ProductCD(id=p.id).pack())
     
     kb.button(text="🏠 Main Menu", callback_data="main_menu")
     kb.adjust(1)

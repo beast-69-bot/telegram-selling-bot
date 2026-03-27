@@ -66,7 +66,7 @@ async def cb_product_actions(callback: CallbackQuery, callback_data: AdminProduc
     ) or "  No plans yet"
 
     text = (
-        f"{product.emoji or '🛍'} <b>{product.name}</b>\n"
+        f"{product.emoji or '📦'} <b>{product.name}</b>\n"
         f"Category: {product.category}\n"
         f"Status: {'✅ Active' if product.is_active else '❌ Inactive'}\n\n"
         f"<b>Requirements:</b>\n{product.requirements_text or 'No extra requirements'}\n\n"
@@ -184,7 +184,7 @@ async def step_name(message: Message, state: FSMContext):
         await message.answer(
             "Step 2/7: Send a <b>custom emoji</b> for this product button.\n"
             "Examples: 🎬 🎮 💻 📺 🔐\n"
-            "Or send /skip to use 🛍."
+            "Or send /skip to use 📦."
         )
     except Exception as e:
         logger.exception("Error sending message")
@@ -192,7 +192,7 @@ async def step_name(message: Message, state: FSMContext):
 
 @router.message(AddProductStates.emoji, ProductAdminFilter())
 async def step_emoji(message: Message, state: FSMContext):
-    emoji = "🛍" if message.text == "/skip" else message.text.strip()
+    emoji = "📦" if message.text == "/skip" else message.text.strip()
     if not emoji:
         await message.answer("Please send one emoji or /skip.")
         return
@@ -314,7 +314,7 @@ async def _save_product(message: Message, state: FSMContext):
 
     product = await create_product(
         name=data["name"],
-        emoji=data.get("emoji", "🛍"),
+        emoji=data.get("emoji", "📦"),
         tagline=data.get("tagline", ""),
         description=data.get("description", ""),
         requirements_text=data.get("requirements_text") or None,

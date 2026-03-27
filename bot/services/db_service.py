@@ -70,7 +70,7 @@ def _product_from_doc(doc: dict | None) -> Optional[Product]:
     return Product(
         id=int(doc["_id"]),
         name=doc.get("name", ""),
-        emoji=doc.get("emoji") or "🛍",
+        emoji=doc.get("emoji") or "📦",
         image_file_id=doc.get("image_file_id"),
         tagline=doc.get("tagline"),
         description=doc.get("description"),
@@ -315,7 +315,7 @@ async def create_product(name: str, emoji: str, tagline: str, description: str, 
         {
             "_id": product_id,
             "name": name,
-            "emoji": emoji or "🛍",
+            "emoji": emoji or "📦",
             "image_file_id": image_file_id,
             "tagline": tagline,
             "description": description,

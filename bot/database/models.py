@@ -59,7 +59,7 @@ class Admin:
 class Product:
     id: int
     name: str
-    emoji: str = "🛍"
+    emoji: str = "📦"
     image_file_id: Optional[str] = None
     tagline: Optional[str] = None
     description: Optional[str] = None

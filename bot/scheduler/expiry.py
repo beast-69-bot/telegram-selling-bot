@@ -25,7 +25,7 @@ async def _check_expired_orders(bot: Bot) -> None:
                     f"⏰ <b>Order Expired</b>\n\n"
                     f"Order <b>#{order.order_id}</b> has expired.\n"
                     f"Payment was not received within the time limit.\n\n"
-                    f"Please create a new order to continue. 🛍"
+                    f"Please create a new order to continue. 📦"
                 ),
             )
         except Exception as e:

@@ -3,6 +3,7 @@ handlers/admin/orders.py
 Order admin: pending deliveries + owner/superadmin full order history.
 """
 
+import html
 import math
 
 from aiogram import Bot, F, Router
@@ -18,6 +19,7 @@ from keyboards.keyboards import (
     AdminMessageUserCD,
     AdminOrderInfoCD,
     AdminOrdersPageCD,
+    AdminStopMessageUserCD,
     DoDeliverCD,
     admin_orders_page_kb,
     back_to_admin_kb,
@@ -63,15 +65,35 @@ def _all_orders_kb(orders: list[Order], page: int, total: int):
     total_pages = max(1, math.ceil(total / per_page))
     nav = []
     if page > 0:
-        nav.append(("Prev", AdminAllOrdersPageCD(page=page - 1).pack()))
-    nav.append((f"{page + 1}/{total_pages}", "noop"))
+        nav.append(("⬅️ Prev", AdminAllOrdersPageCD(page=page - 1).pack()))
+    nav.append((f"📄 {page + 1}/{total_pages}", "noop"))
     if (page + 1) * per_page < total:
-        nav.append(("Next", AdminAllOrdersPageCD(page=page + 1).pack()))
+        nav.append(("Next ➡️", AdminAllOrdersPageCD(page=page + 1).pack()))
 
     for text, data in nav:
         builder.button(text=text, callback_data=data)
     builder.adjust(1, len(nav), 1)
-    builder.button(text="Admin Panel", callback_data="admin:panel")
+    builder.button(text="⬅️ Admin Panel", callback_data="admin:panel")
+    return builder.as_markup()
+
+
+def _contact_user_nav_kb(order_id: str, page: int, with_stop: bool = False):
+    builder = InlineKeyboardBuilder()
+    if with_stop:
+        builder.button(
+            text="🛑 Stop Messaging",
+            callback_data=AdminStopMessageUserCD(order_id=order_id, page=page).pack(),
+        )
+    builder.button(
+        text="⬅️ Back to Order",
+        callback_data=AdminOrderInfoCD(order_id=order_id, page=page).pack(),
+    )
+    builder.button(
+        text="🧾 All Orders",
+        callback_data=AdminAllOrdersPageCD(page=page).pack(),
+    )
+    builder.button(text="⬅️ Admin Panel", callback_data="admin:panel")
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -236,14 +258,14 @@ async def cb_all_order_info(callback: CallbackQuery, callback_data: AdminOrderIn
 
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="Message User",
+        text="💬 Message User",
         callback_data=AdminMessageUserCD(order_id=order.order_id, page=callback_data.page).pack(),
     )
     builder.button(
-        text="Back to All Orders",
+        text="⬅️ Back to All Orders",
         callback_data=AdminAllOrdersPageCD(page=callback_data.page).pack(),
     )
-    builder.button(text="Admin Panel", callback_data="admin:panel")
+    builder.button(text="⬅️ Admin Panel", callback_data="admin:panel")
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
@@ -262,14 +284,29 @@ async def cb_message_user(callback: CallbackQuery, callback_data: AdminMessageUs
         contact_user_id=order.user_id,
         contact_order_id=order.order_id,
         contact_page=callback_data.page,
+        contact_intro_sent=False,
     )
     await callback.message.answer(
-        f"<b>Message User</b>\n\n"
+        f"<b>Message Mode Enabled</b>\n\n"
         f"Order: <b>#{order.order_id}</b>\n"
         f"User ID: <code>{order.user_id}</code>\n\n"
-        "Ab jo bhi message/file/photo bhejoge, user ko forward ho jayega.",
+        "Ab jo bhi text/file/photo/video bhejoge, user ko forward ho jayega.\n"
+        "Session close karne ke liye /done bhejo ya Stop Messaging button use karo.",
+        reply_markup=_contact_user_nav_kb(order.order_id, callback_data.page, with_stop=True),
     )
     await callback.answer()
+
+
+@router.callback_query(AdminStopMessageUserCD.filter(), OwnerOrSuperFilter())
+async def cb_stop_message_user(callback: CallbackQuery, callback_data: AdminStopMessageUserCD, state: FSMContext):
+    if await state.get_state() == ContactUserStates.waiting_message.state:
+        await state.clear()
+
+    await callback.message.answer(
+        f"Message mode closed for order #{callback_data.order_id}.",
+        reply_markup=_contact_user_nav_kb(callback_data.order_id, callback_data.page),
+    )
+    await callback.answer("Message mode closed.")
 
 
 @router.message(ContactUserStates.waiting_message, OwnerOrSuperFilter())
@@ -278,37 +315,49 @@ async def handle_message_user(message: Message, state: FSMContext, bot: Bot):
     user_id = data.get("contact_user_id")
     order_id = data.get("contact_order_id")
     page = int(data.get("contact_page", 0))
+    intro_sent = bool(data.get("contact_intro_sent", False))
 
     if not user_id or not order_id:
         await state.clear()
         await message.answer("Session expired. Please open order details again.")
         return
 
-    try:
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
-                "<b>Support Update</b>\n\n"
-                f"Order: <b>#{order_id}</b>"
-            ),
+    text = (message.text or "").strip().lower()
+    if text in {"/done", "/stop", "/cancel"}:
+        await state.clear()
+        await message.answer(
+            f"Message mode closed for order #{order_id}.",
+            reply_markup=_contact_user_nav_kb(order_id, page),
         )
+        return
+
+    if message.text and message.text.strip().startswith("/"):
+        await message.answer(
+            "Command detect hua, user ko forward nahi kiya.\n"
+            "Message mode exit karne ke liye /done bhejo.",
+            reply_markup=_contact_user_nav_kb(order_id, page, with_stop=True),
+        )
+        return
+
+    try:
+        if not intro_sent:
+            admin_name = html.escape(message.from_user.full_name or str(message.from_user.id))
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "<b>Support Update</b>\n\n"
+                    f"Order: <b>#{order_id}</b>\n"
+                    f"From: <b>{admin_name}</b>"
+                ),
+            )
+            await state.update_data(contact_intro_sent=True)
         await message.copy_to(chat_id=user_id)
         await log_action(message.from_user.id, "message_user", order_id)
     except Exception:
-        await state.clear()
         await message.answer("User ko message nahi gaya. User ne bot block kiya ho sakta hai.")
         return
 
-    await state.clear()
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text="Back to Order",
-        callback_data=AdminOrderInfoCD(order_id=order_id, page=page).pack(),
+    await message.answer(
+        "Sent to user. Continue messaging or /done to close.",
+        reply_markup=_contact_user_nav_kb(order_id, page, with_stop=True),
     )
-    builder.button(
-        text="Back to All Orders",
-        callback_data=AdminAllOrdersPageCD(page=page).pack(),
-    )
-    builder.button(text="Admin Panel", callback_data="admin:panel")
-    builder.adjust(1)
-    await message.answer("Message user ko successfully bhej diya.", reply_markup=builder.as_markup())

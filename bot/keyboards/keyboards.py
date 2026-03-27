@@ -104,6 +104,11 @@ class AdminMessageUserCD(CallbackData, prefix="admin_message_user"):
     page: int
 
 
+class AdminStopMessageUserCD(CallbackData, prefix="admin_stop_message_user"):
+    order_id: str
+    page: int
+
+
 class AdminInfoCD(CallbackData, prefix="admin_info"):
     user_id: int
 
@@ -126,10 +131,10 @@ class ToggleBanCD(CallbackData, prefix="toggle_ban"):
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Products", callback_data=BrowseProductsCD(page=0).pack())
-    builder.button(text="My Profile", callback_data="my_profile")
-    builder.button(text="My Orders", callback_data="my_orders")
-    builder.button(text="Support", callback_data="support")
+    builder.button(text="📦 Products", callback_data=BrowseProductsCD(page=0).pack())
+    builder.button(text="👤 My Profile", callback_data="my_profile")
+    builder.button(text="🧾 My Orders", callback_data="my_orders")
+    builder.button(text="💬 Support", callback_data="support")
     builder.adjust(2, 2)
     return builder.as_markup()
 
@@ -138,8 +143,8 @@ def products_page_kb(products: List[Product], page: int, total: int) -> InlineKe
     builder = InlineKeyboardBuilder()
 
     for product in products:
-        status = "🔴" if not product.is_active else "🟢"
-        emoji = product.emoji or "🛍"
+        status = "✅" if product.is_active else "❌"
+        emoji = product.emoji or "📦"
         builder.button(
             text=f"{status} {emoji} {product.name}",
             callback_data=ProductCD(id=product.id).pack(),
@@ -153,29 +158,29 @@ def products_page_kb(products: List[Product], page: int, total: int) -> InlineKe
 
     if page > 0:
         nav_buttons.append(
-            InlineKeyboardButton(text="Prev", callback_data=BrowseProductsCD(page=page - 1).pack())
+            InlineKeyboardButton(text="⬅️ Prev", callback_data=BrowseProductsCD(page=page - 1).pack())
         )
     nav_buttons.append(
-        InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop")
+        InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop")
     )
     if (page + 1) * per_page < total:
         nav_buttons.append(
-            InlineKeyboardButton(text="Next", callback_data=BrowseProductsCD(page=page + 1).pack())
+            InlineKeyboardButton(text="Next ➡️", callback_data=BrowseProductsCD(page=page + 1).pack())
         )
 
     builder.row(*nav_buttons)
     builder.row(
-        InlineKeyboardButton(text="Search", callback_data="search_products"),
-        InlineKeyboardButton(text="Main Menu", callback_data="main_menu"),
+        InlineKeyboardButton(text="🔎 Search", callback_data="search_products"),
+        InlineKeyboardButton(text="🏠 Main Menu", callback_data="main_menu"),
     )
     return builder.as_markup()
 
 
 def product_detail_kb(product_id: int, page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Select Plan", callback_data=PlansCD(product_id=product_id).pack())
-    builder.button(text="Back to Products", callback_data=BrowseProductsCD(page=page).pack())
-    builder.button(text="Main Menu", callback_data="main_menu")
+    builder.button(text="💳 Select Plan", callback_data=PlansCD(product_id=product_id).pack())
+    builder.button(text="⬅️ Back to Products", callback_data=BrowseProductsCD(page=page).pack())
+    builder.button(text="🏠 Main Menu", callback_data="main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -184,33 +189,33 @@ def plans_kb(plans: List[Plan], product_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for plan in plans:
         builder.button(
-            text=f"{plan.name} - Rs {plan.price:.0f}",
+            text=f"💠 {plan.name} • ₹{plan.price:.0f}",
             callback_data=SelectPlanCD(plan_id=plan.id).pack(),
         )
-    builder.button(text="Back", callback_data=ProductCD(id=product_id).pack())
+    builder.button(text="⬅️ Back", callback_data=ProductCD(id=product_id).pack())
     builder.adjust(1)
     return builder.as_markup()
 
 
 def order_confirm_kb(plan_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Confirm Order", callback_data=OrderConfirmCD(plan_id=plan_id).pack())
-    builder.button(text="Cancel", callback_data="main_menu")
+    builder.button(text="✅ Confirm Order", callback_data=OrderConfirmCD(plan_id=plan_id).pack())
+    builder.button(text="❌ Cancel", callback_data="main_menu")
     builder.adjust(2)
     return builder.as_markup()
 
 
 def payment_sent_kb(order_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="I've sent payment", callback_data=UploadScreenshotCD(order_id=order_id).pack())
-    builder.button(text="Cancel Order", callback_data=CancelOrderCD(order_id=order_id).pack())
+    builder.button(text="✅ I've Sent Payment", callback_data=UploadScreenshotCD(order_id=order_id).pack())
+    builder.button(text="❌ Cancel Order", callback_data=CancelOrderCD(order_id=order_id).pack())
     builder.adjust(1)
     return builder.as_markup()
 
 
 def cancel_screenshot_kb(order_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Cancel", callback_data=CancelOrderCD(order_id=order_id).pack())
+    builder.button(text="❌ Cancel", callback_data=CancelOrderCD(order_id=order_id).pack())
     builder.adjust(1)
     return builder.as_markup()
 
@@ -219,41 +224,41 @@ def my_orders_kb(orders: List[Order]) -> InlineKeyboardMarkup:
     from database.models import OrderStatus
 
     status_map = {
-        OrderStatus.pending: "Pending",
-        OrderStatus.submitted: "Submitted",
-        OrderStatus.paid: "Paid",
-        OrderStatus.delivered: "Delivered",
-        OrderStatus.rejected: "Rejected",
-        OrderStatus.expired: "Expired",
-        OrderStatus.cancelled: "Cancelled",
+        OrderStatus.pending: "⏳ Pending",
+        OrderStatus.submitted: "📤 Submitted",
+        OrderStatus.paid: "✅ Paid",
+        OrderStatus.delivered: "📦 Delivered",
+        OrderStatus.rejected: "❌ Rejected",
+        OrderStatus.expired: "🕒 Expired",
+        OrderStatus.cancelled: "🚫 Cancelled",
     }
 
     builder = InlineKeyboardBuilder()
     for order in orders:
         label = status_map.get(order.status, "Unknown")
         builder.button(
-            text=f"{label} #{order.order_id} - {order.product_name[:20]}",
+            text=f"{label} • #{order.order_id} • {order.product_name[:18]}",
             callback_data=OrderDetailCD(order_id=order.order_id).pack(),
         )
-    builder.button(text="Main Menu", callback_data="main_menu")
+    builder.button(text="🏠 Main Menu", callback_data="main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def admin_panel_kb(show_all_orders: bool = False, show_revenue: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Products", callback_data="admin:products")
-    builder.button(text="Payments", callback_data="admin:payments")
-    builder.button(text="Orders", callback_data="admin:orders")
+    builder.button(text="📦 Products", callback_data="admin:products")
+    builder.button(text="💳 Payments", callback_data="admin:payments")
+    builder.button(text="📬 Orders", callback_data="admin:orders")
     if show_all_orders:
-        builder.button(text="All Orders", callback_data="admin:all_orders")
+        builder.button(text="🧾 All Orders", callback_data="admin:all_orders")
     if show_revenue:
-        builder.button(text="Revenue", callback_data="admin:revenue")
-    builder.button(text="Admins", callback_data="admin:admins")
-    builder.button(text="Settings", callback_data="admin:settings")
-    builder.button(text="Stats", callback_data="admin:stats")
-    builder.button(text="Broadcast", callback_data="admin:broadcast")
-    builder.button(text="Ban Users", callback_data="admin:ban")
+        builder.button(text="💰 Revenue", callback_data="admin:revenue")
+    builder.button(text="👥 Admins", callback_data="admin:admins")
+    builder.button(text="⚙️ Settings", callback_data="admin:settings")
+    builder.button(text="📊 Stats", callback_data="admin:stats")
+    builder.button(text="📢 Broadcast", callback_data="admin:broadcast")
+    builder.button(text="🚫 Ban Users", callback_data="admin:ban")
     builder.adjust(2, 2, 2, 2, 2)
     return builder.as_markup()
 
@@ -262,28 +267,28 @@ def admin_products_kb(products: List[Product]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for product in products:
         status = "✅" if product.is_active else "❌"
-        emoji = product.emoji or "🛍"
+        emoji = product.emoji or "📦"
         builder.button(text=f"{status} {emoji} {product.name}", callback_data=AdminProductCD(id=product.id).pack())
-    builder.button(text="Add Product", callback_data="admin_add_product")
-    builder.button(text="Back", callback_data="admin:panel")
+    builder.button(text="➕ Add Product", callback_data="admin_add_product")
+    builder.button(text="⬅️ Back", callback_data="admin:panel")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def admin_product_actions_kb(product_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Edit", callback_data=AdminEditProductCD(id=product_id).pack())
-    builder.button(text="Add Plan", callback_data=AdminAddPlanCD(product_id=product_id).pack())
-    builder.button(text="Delete", callback_data=AdminDeleteProductCD(id=product_id).pack())
-    builder.button(text="Back", callback_data="admin:products")
+    builder.button(text="✏️ Edit", callback_data=AdminEditProductCD(id=product_id).pack())
+    builder.button(text="➕ Add Plan", callback_data=AdminAddPlanCD(product_id=product_id).pack())
+    builder.button(text="🗑 Delete", callback_data=AdminDeleteProductCD(id=product_id).pack())
+    builder.button(text="⬅️ Back", callback_data="admin:products")
     builder.adjust(2, 1, 1)
     return builder.as_markup()
 
 
 def payment_verify_kb(order_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Approve", callback_data=ApprovePaymentCD(order_id=order_id).pack())
-    builder.button(text="Reject", callback_data=RejectPaymentCD(order_id=order_id).pack())
+    builder.button(text="✅ Approve", callback_data=ApprovePaymentCD(order_id=order_id).pack())
+    builder.button(text="❌ Reject", callback_data=RejectPaymentCD(order_id=order_id).pack())
     builder.adjust(2)
     return builder.as_markup()
 
@@ -292,7 +297,7 @@ def admin_orders_page_kb(orders: List[Order], page: int, total: int) -> InlineKe
     builder = InlineKeyboardBuilder()
     for order in orders:
         builder.button(
-            text=f"#{order.order_id} - {order.product_name[:25]}",
+            text=f"📦 #{order.order_id} • {order.product_name[:22]}",
             callback_data=AdminDeliverCD(order_id=order.order_id).pack(),
         )
     builder.adjust(1)
@@ -301,21 +306,21 @@ def admin_orders_page_kb(orders: List[Order], page: int, total: int) -> InlineKe
     total_pages = max(1, math.ceil(total / per_page))
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="Prev", callback_data=AdminOrdersPageCD(page=page - 1).pack()))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+        nav.append(InlineKeyboardButton(text="⬅️ Prev", callback_data=AdminOrdersPageCD(page=page - 1).pack()))
+    nav.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
     if (page + 1) * per_page < total:
-        nav.append(InlineKeyboardButton(text="Next", callback_data=AdminOrdersPageCD(page=page + 1).pack()))
+        nav.append(InlineKeyboardButton(text="Next ➡️", callback_data=AdminOrdersPageCD(page=page + 1).pack()))
     if nav:
         builder.row(*nav)
 
-    builder.row(InlineKeyboardButton(text="Admin Panel", callback_data="admin:panel"))
+    builder.row(InlineKeyboardButton(text="⬅️ Admin Panel", callback_data="admin:panel"))
     return builder.as_markup()
 
 
 def confirm_deliver_kb(order_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Deliver Now", callback_data=DoDeliverCD(order_id=order_id).pack())
-    builder.button(text="Back", callback_data="admin:orders")
+    builder.button(text="✅ Deliver Now", callback_data=DoDeliverCD(order_id=order_id).pack())
+    builder.button(text="⬅️ Back", callback_data="admin:orders")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -326,7 +331,7 @@ def admin_roles_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for role in [AdminRole.product_admin, AdminRole.payment_admin, AdminRole.order_admin, AdminRole.super_admin]:
         builder.button(text=role.value.replace("_", " ").title(), callback_data=SetRoleCD(role=role.value).pack())
-    builder.button(text="Cancel", callback_data="admin:admins")
+    builder.button(text="❌ Cancel", callback_data="admin:admins")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
@@ -334,13 +339,13 @@ def admin_roles_kb() -> InlineKeyboardMarkup:
 def _admin_recent_users_kb_legacy(users: List["User"]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for user in users:
-        status = "BANNED" if getattr(user, "is_banned", False) else "ACTIVE"
+        status = "🚫 BANNED" if getattr(user, "is_banned", False) else "✅ ACTIVE"
         label = user.username or user.full_name or str(user.id)
         builder.button(
             text=f"{status} {label[:24]}",
             callback_data=ToggleBanCD(user_id=user.id).pack(),
         )
-    builder.button(text="Admin Panel", callback_data="admin:panel")
+    builder.button(text="⬅️ Admin Panel", callback_data="admin:panel")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -348,27 +353,27 @@ def _admin_recent_users_kb_legacy(users: List["User"]) -> InlineKeyboardMarkup:
 def admin_recent_users_kb(users: List["User"]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for user in users:
-        status = "[BANNED]" if getattr(user, "is_banned", False) else "[ACTIVE]"
+        status = "🚫 BANNED" if getattr(user, "is_banned", False) else "✅ ACTIVE"
         label = user.username or user.full_name or str(user.id)
         builder.button(
             text=f"{status} {label[:24]}",
             callback_data=ToggleBanCD(user_id=user.id).pack(),
         )
-    builder.button(text="Back to Admin Panel", callback_data="admin:panel")
+    builder.button(text="⬅️ Admin Panel", callback_data="admin:panel")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def back_to_admin_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Admin Panel", callback_data="admin:panel")
+    builder.button(text="⬅️ Admin Panel", callback_data="admin:panel")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def confirm_broadcast_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Send to all users", callback_data="broadcast_confirm")
-    builder.button(text="Cancel", callback_data="admin:panel")
+    builder.button(text="✅ Send to All Users", callback_data="broadcast_confirm")
+    builder.button(text="❌ Cancel", callback_data="admin:panel")
     builder.adjust(1)
     return builder.as_markup()

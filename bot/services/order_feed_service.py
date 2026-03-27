@@ -92,7 +92,7 @@ def _render_order_feed_text(order: Order) -> str:
         f"📌 Status: <b>{_safe(_order_status_label(order))}</b>\n"
         f"👤 User ID: <code>{order.user_id}</code>\n"
         f"🙍 Username: {_safe(username)}\n"
-        f"🛍 Product: {_safe(order.product_name)}\n"
+        f"📦 Product: {_safe(order.product_name)}\n"
         f"📋 Plan: {_safe(order.plan_name)}\n"
         f"💰 Amount: <b>₹{order.amount:.0f}</b>\n"
         f"🕒 Created: {_format_dt(order.created_at)}\n"
